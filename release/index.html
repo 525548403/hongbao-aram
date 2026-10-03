@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>红包乱斗</title>
+<script src="vendor/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg0: #0a0f1e; --bg1: #0e1528; --card: #141c33; --card2: #182140;
+    --line: rgba(148, 170, 220, .12); --ink: #e8edf7; --sub: #8fa0bf;
+    --gold: #e8b339; --gold2: #f5cf6b; --blue: #4f8cff; --purple: #8b6cf5;
+    --red: #ff5d5d; --green: #3ecf8e; --teal: #2dd4bf;
+    --shadow: 0 10px 32px rgba(0, 0, 0, .35);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; color: var(--ink);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background:
+      radial-gradient(1200px 500px at 15% -5%, rgba(79, 140, 255, .14), transparent 60%),
+      radial-gradient(1000px 500px at 90% 0%, rgba(139, 108, 245, .12), transparent 55%),
+      radial-gradient(900px 600px at 50% 110%, rgba(232, 179, 57, .07), transparent 60%),
+      linear-gradient(180deg, var(--bg0), var(--bg1));
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2a3554; border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  header {
+    position: relative; overflow: hidden;
+    padding: 34px 32px 30px;
+    background: linear-gradient(120deg, rgba(23, 34, 66, .9), rgba(38, 27, 68, .85));
+    border-bottom: 1px solid var(--line);
+  }
+  header::before {
+    content: ""; position: absolute; inset: 0;
+    background:
+      radial-gradient(600px 200px at 85% 20%, rgba(232, 179, 57, .16), transparent 60%),
+      radial-gradient(500px 220px at 10% 80%, rgba(79, 140, 255, .18), transparent 60%);
+    pointer-events: none;
+  }
+  header .inner { position: relative; max-width: 1100px; margin: 0 auto; }
+  header h1 {
+    margin: 0; font-size: 26px; letter-spacing: 1px; font-weight: 800;
+    background: linear-gradient(90deg, #fff, #ffd97a 55%, #e8b339);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  header p { margin: 10px 0 0; color: var(--sub); font-size: 13px; letter-spacing: .3px; }
+  header .crest {
+    position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+    font-size: 13px; color: var(--gold); border: 1px solid rgba(232, 179, 57, .35);
+    padding: 8px 16px; border-radius: 999px; letter-spacing: 2px;
+    background: rgba(232, 179, 57, .08); backdrop-filter: blur(4px);
+  }
+  @media (max-width: 700px){ header .crest { display: none; } }
+
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
+
+  .controls {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    background: linear-gradient(180deg, var(--card), var(--card2));
+    border: 1px solid var(--line); border-radius: 16px;
+    padding: 16px 18px; margin-bottom: 20px; box-shadow: var(--shadow);
+  }
+  .controls label { font-size: 13px; color: var(--sub); display: flex; align-items: center; gap: 6px; }
+  .controls input {
+    width: 64px; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 10px; font-size: 14px; color: var(--ink);
+    background: rgba(0, 0, 0, .25); outline: none; transition: border .15s;
+  }
+  .controls input:focus { border-color: var(--blue); }
+  button {
+    border: none; border-radius: 10px; padding: 10px 18px; font-size: 14px;
+    cursor: pointer; font-weight: 700; letter-spacing: .3px;
+    color: #101625;
+    background: linear-gradient(135deg, var(--gold2), var(--gold));
+    box-shadow: 0 4px 18px rgba(232, 179, 57, .25);
+    transition: transform .12s, filter .15s;
+  }
+  button:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  button:active { transform: translateY(0); }
+  button.ghost {
+    background: rgba(148, 170, 220, .10); color: var(--ink);
+    border: 1px solid var(--line); box-shadow: none; font-weight: 600;
+  }
+  button.ghost:hover { background: rgba(148, 170, 220, .18); }
+  #status { font-size: 12px; color: var(--sub); }
+
+  .summary { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
+  .stat {
+    background: linear-gradient(180deg, var(--card), var(--card2));
+    border: 1px solid var(--line); border-radius: 16px;
+    padding: 16px 20px; min-width: 128px; flex: 1;
+    box-shadow: var(--shadow); position: relative; overflow: hidden;
+    animation: rise .5s ease both;
+  }
+  .stat:nth-child(2){ animation-delay: .05s; } .stat:nth-child(3){ animation-delay: .1s; }
+  .stat:nth-child(4){ animation-delay: .15s; } .stat:nth-child(5){ animation-delay: .2s; }
+  .stat.hero { flex: 1.3; border-color: rgba(232, 179, 57, .45);
+    background: linear-gradient(160deg, rgba(232, 179, 57, .14), var(--card) 55%); }
+  .stat.hero::after {
+    content: "★"; position: absolute; right: 10px; top: 8px;
+    color: rgba(232, 179, 57, .35); font-size: 20px;
+  }
+  .stat .v {
+    font-size: 30px; font-weight: 800; letter-spacing: .5px;
+    background: linear-gradient(180deg, #fff, #b9c8e8);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .stat.hero .v {
+    background: linear-gradient(180deg, var(--gold2), var(--gold));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 24px rgba(232, 179, 57, .35);
+  }
+  .stat .l { font-size: 12px; color: var(--sub); margin-top: 4px; }
+
+  .match {
+    background: linear-gradient(180deg, var(--card), var(--card2));
+    border: 1px solid var(--line); border-radius: 18px;
+    padding: 18px 20px; margin-bottom: 18px; box-shadow: var(--shadow);
+    animation: rise .5s ease both;
+  }
+  .match:nth-child(odd) { animation-delay: .06s; }
+  .match-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .match-head .champ { font-weight: 800; font-size: 17px; letter-spacing: .5px; }
+  .badge { padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 800; letter-spacing: 1px; }
+  .win { background: rgba(62, 207, 142, .15); color: var(--green); border: 1px solid rgba(62, 207, 142, .35); }
+  .lose { background: rgba(255, 93, 93, .13); color: var(--red); border: 1px solid rgba(255, 93, 93, .35); }
+  .me-tag {
+    background: rgba(232, 179, 57, .12); color: var(--gold2); font-size: 11px;
+    padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(232, 179, 57, .3);
+  }
+  .idx { font-size: 12px; color: var(--sub); margin-left: auto; }
+
+  .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 760px){ .grid { grid-template-columns: 1fr; } }
+  .radar-card {
+    background: rgba(0, 0, 0, .22); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--sub); font-weight: 600; font-size: 12px; letter-spacing: .5px; }
+  tbody tr { transition: background .12s; }
+  tbody tr:hover { background: rgba(79, 140, 255, .07); }
+  tbody tr.me { background: rgba(232, 179, 57, .06); box-shadow: inset 3px 0 0 var(--gold); }
+
+  .grade {
+    display: inline-block; width: 26px; height: 26px; line-height: 26px;
+    text-align: center; border-radius: 8px; color: #10131c;
+    font-weight: 900; font-size: 13px;
+  }
+  .g-S { background: linear-gradient(135deg, #ffe08a, #e8a91f); box-shadow: 0 0 14px rgba(232, 179, 57, .45); }
+  .g-A { background: linear-gradient(135deg, #9dc0ff, #4f8cff); color: #0c1428; box-shadow: 0 0 12px rgba(79, 140, 255, .35); }
+  .g-B { background: linear-gradient(135deg, #7fe3b8, #3ecf8e); box-shadow: 0 0 12px rgba(62, 207, 142, .3); }
+  .g-C { background: linear-gradient(135deg, #b8c4d8, #8fa0bf); }
+  .g-D { background: linear-gradient(135deg, #ff8f8f, #ff5d5d); box-shadow: 0 0 12px rgba(255, 93, 93, .3); }
+  .flag { color: var(--red); font-size: 11px; font-weight: 700; }
+  .note { color: var(--red); font-size: 11px; }
+  .role-tag {
+    display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px;
+    font-weight: 700; background: rgba(148, 170, 220, .12); color: #b9c8e8;
+    white-space: nowrap; border: 1px solid var(--line);
+  }
+  .role-tank{background:rgba(79,140,255,.14);color:#9dc0ff;border-color:rgba(79,140,255,.3);}
+  .role-fighter{background:rgba(255,150,80,.13);color:#ffb37e;border-color:rgba(255,150,80,.3);}
+  .role-mage{background:rgba(139,108,245,.15);color:#c0adff;border-color:rgba(139,108,245,.35);}
+  .role-marksman{background:rgba(62,207,142,.13);color:#7fe3b8;border-color:rgba(62,207,142,.3);}
+  .role-assassin{background:rgba(255,93,93,.13);color:#ff9d9d;border-color:rgba(255,93,93,.3);}
+  .role-support{background:rgba(45,212,191,.13);color:#7ceee0;border-color:rgba(45,212,191,.3);}
+  .role-generic{background:rgba(148,170,220,.12);color:#b9c8e8;border-color:var(--line);}
+  .style-hint { font-size: 11px; color: var(--sub); }
+
+  /* ---- 红包局 ---- */
+  tbody tr.rp { background: rgba(255, 93, 93, .08); box-shadow: inset 3px 0 0 var(--red); }
+  tbody tr.rp:hover { background: rgba(255, 93, 93, .13); }
+  .party-tag {
+    display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px;
+    font-weight: 700; background: rgba(45, 212, 191, .13); color: #7ceee0;
+    border: 1px solid rgba(45, 212, 191, .3); white-space: nowrap;
+  }
+  .rp-tag {
+    display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px;
+    font-weight: 800; background: rgba(255, 93, 93, .16); color: #ff9d9d;
+    border: 1px solid rgba(255, 93, 93, .4); white-space: nowrap; margin-left: 4px;
+  }
+  .rp-head {
+    background: rgba(255, 93, 93, .12); color: #ff9d9d; font-size: 11px;
+    padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(255, 93, 93, .35);
+    font-weight: 700;
+  }
+  .party-head {
+    background: rgba(45, 212, 191, .1); color: #7ceee0; font-size: 11px;
+    padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(45, 212, 191, .3);
+  }
+  /* ---- 红包局左侧悬浮面板 ---- */
+  #rpFloat {
+    position: fixed; left: 16px; top: 148px; width: 252px; z-index: 60;
+    background: linear-gradient(180deg, var(--card), var(--card2));
+    border: 1px solid var(--line); border-radius: 16px;
+    padding: 14px; box-shadow: var(--shadow);
+    max-height: calc(100vh - 170px); overflow-y: auto;
+    display: none; font-size: 12px;
+  }
+  #rpFloat .rp-title { font-weight: 800; font-size: 14px; color: var(--gold2); margin-bottom: 8px; letter-spacing: 1px; }
+  #rpFloat .rp-sub { color: var(--sub); font-size: 11px; margin: 8px 0 4px; font-weight: 700; letter-spacing: .5px; }
+  .rp-mate { display: flex; justify-content: space-between; padding: 3px 0; }
+  .rp-mate .rp-ct { color: var(--teal); font-size: 11px; }
+  .rp-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+  .rp-row:last-child { border-bottom: none; }
+  .rp-row .rp-rank { width: 16px; color: var(--sub); }
+  .rp-row .rp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rp-row .rp-n { color: var(--sub); font-size: 11px; }
+  .rp-row .rp-amt { font-weight: 800; color: var(--sub); min-width: 46px; text-align: right; }
+  .rp-row.rp-pay .rp-amt { color: var(--red); }
+  .rp-row.rp-pay .rp-name { color: #ff9d9d; font-weight: 700; }
+  .rp-row.rp-get .rp-amt { color: var(--green); }
+  .rp-row.rp-get .rp-name { color: #7fe3b8; font-weight: 700; }
+  .rp-unit { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--sub); }
+  .rp-unit input, .rp-unit select {
+    width: 64px; padding: 5px 8px; border: 1px solid var(--line);
+    border-radius: 8px; font-size: 12px; color: var(--ink);
+    background: rgba(0, 0, 0, .25); outline: none;
+  }
+  .rp-unit select { flex: 1; cursor: pointer; }
+  .rp-unit input:focus, .rp-unit select:focus { border-color: var(--gold); }
+  .rp-scope-btns { display: flex; gap: 6px; margin: 6px 0 2px; }
+  .rp-scope-btns button { flex: 1; font-size: 11px; padding: 4px 0; }
+  .rp-scope-btns button:disabled { opacity: .4; cursor: default; }
+  /* 组队名单 chips + 手动添加 */
+  .chipbox { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 2px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    background: rgba(45, 212, 191, .12); color: #7ceee0;
+    border: 1px solid rgba(45, 212, 191, .3); max-width: 100%;
+  }
+  .chip.me-chip { background: rgba(232, 179, 57, .12); color: var(--gold2); border-color: rgba(232, 179, 57, .35); }
+  .chip i { font-style: normal; font-weight: 400; color: var(--sub); font-size: 10px; }
+  .chip .x { cursor: pointer; font-weight: 800; color: var(--sub); padding: 0 1px; font-size: 12px; }
+  .chip .x:hover { color: var(--red); }
+  .rp-add { display: flex; gap: 6px; margin: 6px 0 2px; }
+  .rp-add input {
+    flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--line);
+    border-radius: 8px; font-size: 12px; color: var(--ink);
+    background: rgba(0, 0, 0, .25); outline: none;
+  }
+  .rp-add input:focus { border-color: var(--gold); }
+  .rp-add button { padding: 5px 10px; font-size: 12px; }
+  /* 红包榜分项明细行 */
+  .rp-item { border-bottom: 1px dashed var(--line); }
+  .rp-item:last-child { border-bottom: none; }
+  .rp-item .rp-row { border-bottom: none; }
+  .rp-detail { padding: 0 0 6px 22px; color: var(--sub); font-size: 10.5px; line-height: 1.5; }
+  .rp-detail b { font-weight: 700; }
+  .rp-rules { margin-top: 8px; color: var(--sub); font-size: 10.5px; line-height: 1.7; }
+  .penta-tag {
+    display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px;
+    font-weight: 800; background: rgba(232, 179, 57, .16); color: var(--gold2);
+    border: 1px solid rgba(232, 179, 57, .4); white-space: nowrap; margin-left: 4px;
+  }
+  .penta-tag.pay { background: rgba(139, 108, 245, .14); color: #c0adff; border-color: rgba(139, 108, 245, .35); }
+  .penta-head {
+    background: rgba(232, 179, 57, .12); color: var(--gold2); font-size: 11px;
+    padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(232, 179, 57, .35);
+    font-weight: 700;
+  }
+  tbody tr.penta-row { box-shadow: inset 3px 0 0 var(--gold); }
+  @media (max-width: 1400px){
+    #rpFloat { position: static; width: auto; max-width: 1100px; margin: 0 0 18px; }
+  }
+  .stat.rp-hero {
+    border-color: rgba(255, 93, 93, .45);
+    background: linear-gradient(160deg, rgba(255, 93, 93, .14), var(--card) 55%);
+  }
+  .stat.rp-hero .v {
+    background: linear-gradient(180deg, #ffb0b0, var(--red));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .stat.penta-hero {
+    border-color: rgba(232, 179, 57, .45);
+    background: linear-gradient(160deg, rgba(232, 179, 57, .14), var(--card) 55%);
+  }
+  .stat.penta-hero .v {
+    background: linear-gradient(180deg, var(--gold2), var(--gold));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+
+  .legend { font-size: 12px; color: var(--sub); margin-top: 8px; }
+  .empty { text-align: center; color: var(--sub); padding: 48px; font-size: 14px; }
+  .err {
+    background: rgba(255, 93, 93, .1); color: var(--red); padding: 12px 16px;
+    border-radius: 12px; font-size: 13px; margin-bottom: 16px;
+    border: 1px solid rgba(255, 93, 93, .3);
+  }
+  .center { display: flex; justify-content: center; }
+  #importBox textarea {
+    width: 100%; height: 170px; font-family: Consolas, monospace; font-size: 12px;
+    padding: 10px; border: 1px solid var(--line); border-radius: 10px;
+    background: rgba(0, 0, 0, .3); color: var(--ink); outline: none; resize: vertical;
+  }
+  #importBox textarea:focus { border-color: var(--blue); }
+  #importBox code { color: var(--gold2); }
+  #importBox p { font-size: 13px; color: var(--sub); margin-top: 0; }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="inner">
+    <h1>红包乱斗</h1>
+    <p>每英雄专属画像评分 · 同队贡献占比归一 · 综合游戏分 · 🧧红包局（组队识别 + 五杀赏金 + 红包榜）</p>
+  </div>
+  <div class="crest">Design by ZhangY</div>
+</header>
+
+<div class="wrap">
+  <div class="controls">
+    <label>场次 <input id="count" type="number" value="20" min="1" max="50" /></label>
+    <label>战绩计入 <select id="countMode">
+      <option value="incremental" selected>累计增量</option>
+      <option value="single">仅本次拉取</option>
+    </select></label>
+    <button id="btnFetch">拉取战绩</button>
+    <span id="status" style="font-size:12px;"></span>
+  </div>
+
+  <!-- 左侧常驻悬浮: 红包局面板(组队识别 + 红包榜 + 五杀赏金) -->
+  <aside id="rpFloat">
+    <div class="rp-title">🧧 红包局</div>
+    <div id="rpParty"></div>
+    <div id="rpBoard"></div>
+    <label class="rp-unit">红包单价 ¥<input id="unitPrice" type="number" value="10" min="0" step="1" /></label>
+    <label class="rp-unit">五杀赏金 ¥<input id="pentaPrice" type="number" value="20" min="0" step="1" /></label>
+    <label class="rp-unit">识别门槛 <select id="detectLevel">
+      <option value="2" selected>共同游戏 ≥2 场</option>
+      <option value="3">共同游戏 ≥3 场</option>
+      <option value="4">共同游戏 ≥4 场</option>
+    </select></label>
+    <div class="rp-rules">🧧红包：组队3人→组内最后1名发 · 4/5人→组内最后2名发，红包由组内前1、2名拆随机金额（收入随机，不计入榜单）<br>🔥五杀赏金：组队成员五杀 → 其余组队队友每人付赏金（固定金额，可统计）<br>组队名单：拉取时基于最近100场，与我共同游戏≥2场即列为队友（宁多勿漏），识别错的点 ✕ 删除即可，也可手动＋添加 · 名次按组内新评分排</div>
+  </aside>
+
+  <div id="errbox"></div>
+  <div class="summary" id="summary" style="display:none"></div>
+  <div id="matches"></div>
+</div>
+
+<script>
+const PALETTE = ['#4f8cff','#e8b339','#3ecf8e','#c0adff','#ff8f8f','#7ceee0'];
+const CHART_INK = 'rgba(232,237,247,.75)';
+let charts = [];
+
+function setStatus(t){ document.getElementById('status').textContent = t; }
+
+function showError(msg){
+  const b = document.getElementById('errbox');
+  b.innerHTML = msg ? `<div class="err">${msg}</div>` : '';
+}
+
+function renderSummary(data){
+  const m = data.matches || [];
+  const box = document.getElementById('summary');
+  if(!m.length){ box.style.display='none'; return; }
+  const wins = m.filter(x=>x.win).length;
+  const winRate = wins/m.length;
+  const avg = m.reduce((s,x)=>{
+    const me = x.players.find(p=>p.name===x.me_name) || x.players[0];
+    return s + me.new_score;
+  },0)/m.length;
+  // 综合游戏分: 85% 场均英雄画像评分 + 15% 胜率加成
+  const composite = avg*0.85 + winRate*100*0.15;
+  const stats = data.stats || [];
+  // 顶栏按"我"的个人口径显示(不是全场总额); 找不到我时回退全场
+  const meName = (data.me_names && data.me_names[0]) || null;
+  const meRow = meName ? stats.find(x=>x.name===meName) : null;
+  const scope = meRow ? '我的' : '全员';
+  const totalRpOut = meRow ? (meRow.rp_amount||0)
+                   : stats.reduce((s,x)=>s+(x.rp_amount||0),0);
+  const totalPentaIn = meRow ? (meRow.penta_income||0)
+                     : stats.reduce((s,x)=>s+(x.penta_income||0),0);
+  const totalPentaOut = meRow ? (meRow.penta_out||0)
+                      : stats.reduce((s,x)=>s+(x.penta_out||0),0);
+  const pentaNet = totalPentaIn - totalPentaOut;
+  box.style.display='flex';
+  box.innerHTML = `
+    <div class="stat hero"><div class="v">${composite.toFixed(1)}</div><div class="l">综合游戏分</div></div>
+    <div class="stat"><div class="v">${avg.toFixed(1)}</div><div class="l">场均评分</div></div>
+    <div class="stat"><div class="v">${wins}/${m.length}</div><div class="l">胜率 ${Math.round(winRate*100)}%</div></div>
+    <div class="stat"><div class="v">${m.length}</div><div class="l">ARAM 场数</div></div>
+    ${totalRpOut>0?`<div class="stat rp-hero"><div class="v">¥${totalRpOut.toFixed(totalRpOut%1?2:0)}</div><div class="l">🧧 ${scope}红包发出（全场共¥${stats.reduce((s,x)=>s+(x.rp_amount||0),0).toFixed(0)}）</div></div>`:''}
+    ${(totalPentaIn>0||totalPentaOut>0)?`<div class="stat penta-hero"><div class="v">${pentaNet>0?'+':''}¥${Math.abs(pentaNet).toFixed(Math.abs(pentaNet)%1?2:0)}</div><div class="l">🔥 ${scope}五杀赏金（收¥${totalPentaIn.toFixed(totalPentaIn%1?2:0)} − 付¥${totalPentaOut.toFixed(totalPentaOut%1?2:0)}）</div></div>`:''}
+    <div class="stat"><div class="v" style="font-size:20px;padding-top:6px">${data.server||'-'}</div><div class="l">服务器 · ${data.mode}</div></div>`;
+}
+
+function renderMatches(data){
+  charts.forEach(c=>c.destroy()); charts=[];
+  const wrap = document.getElementById('matches');
+  wrap.innerHTML='';
+  const m = data.matches || [];
+  if(!m.length){
+    wrap.innerHTML = '<div class="match"><div class="empty">暂无数据。在已登录英雄联盟客户端 + 国服加速器的机器上点「拉取战绩」，自动拉取最近战绩、识别组队并结算红包。</div></div>';
+    return;
+  }
+  m.forEach((mt, idx)=>{
+    const div = document.createElement('div');
+    div.className='match';
+    const winBadge = mt.win===true?'<span class="badge win">胜</span>'
+                   : mt.win===false?'<span class="badge lose">负</span>':'';
+    const meTag = `<span class="me-tag">我: ${mt.me_name||'-'}</span>`;
+    const partyTag = (mt.party_size||0)>=3
+      ? `<span class="party-head">👥 组队${mt.party_size}人</span>`
+        + ((mt.party_payers&&mt.party_payers.length)
+            ? `<span class="rp-head">🧧 ${mt.party_payers.join('、')} 发红包</span>` : '')
+      : (mt.party_size===2 ? '<span class="party-head">👥 组队2人(不触发)</span>' : '');
+    const pu = data.penta_unit||20;
+    const pentaTags = (mt.penta_events||[]).map(ev=>
+      `<span class="penta-head">🔥 ${ev.holder} 五杀x${ev.count} → ${ev.payers.join('、')} 各付¥${(pu*ev.count).toFixed((pu*ev.count)%1?2:0)}</span>`).join('');
+    div.innerHTML = `
+      <div class="match-head">
+        <span class="champ">${mt.champion_cn||mt.champion||'?'}</span>
+        ${winBadge} ${meTag} ${partyTag} ${pentaTags}
+        <span class="idx">对局 #${idx+1}</span>
+      </div>
+      <div class="grid">
+        <div class="radar-card"><canvas id="radar${idx}" width="360" height="360"></canvas></div>
+        <div>
+          <table>
+            <thead><tr>
+              <th>玩家</th><th>英雄</th><th>定位 / 打法</th><th>KDA</th><th>KP</th><th>有效贡献</th>
+              <th>旧(纯KDA)</th><th>新分</th><th>评级</th><th>组队</th><th>提示</th>
+            </tr></thead>
+            <tbody>${mt.players.slice().sort((a,b)=>b.new_score-a.new_score).map(p=>{
+              const partyCell = p.party_member
+                ? `<span class="party-tag">组内#${p.party_rank??'-'}</span>${p.red_packet?'<span class="rp-tag">🧧 红包</span>':''}`
+                  + (p.penta_holds?`<span class="penta-tag">🔥五杀x${p.penta_holds} 收赏金</span>`:'')
+                  + (p.penta_pays?`<span class="penta-tag pay">🗡付赏金x${p.penta_pays}</span>`:'')
+                : (p.penta_holds?`<span class="penta-tag">🔥五杀x${p.penta_holds}</span>` : '<span style="color:var(--sub)">-</span>');
+              return `
+              <tr class="${p.name===mt.me_name?'me':''} ${p.red_packet?'rp':''} ${p.penta_holds?'penta-row':''}">
+                <td>${p.name}${p.name===mt.me_name?' <span style="color:var(--gold)">★</span>':''}</td>
+                <td>${p.champion_cn||p.champion||'-'}<i style="color:var(--sub);font-style:normal;font-size:11px">${p.champion_cn&&p.champion?' · '+p.champion:''}</i></td>
+                <td><span class="role-tag role-${p.role==='champion_db'?'generic':(p.role||'generic')}">${p.role_label||'-'}</span>
+                    <span class="style-hint">${p.style||''}</span></td>
+                <td>${p.kda}</td>
+                <td>${p.kp}</td>
+                <td>${p.eci}</td>
+                <td>${p.classic_kda}</td>
+                <td><b>${p.new_score}</b></td>
+                <td><span class="grade g-${p.grade}">${p.grade}</span></td>
+                <td>${partyCell}</td>
+                <td class="note">${p.reasons?('⚠'+p.reasons.join(';')):''}</td>
+              </tr>`;}).join('')}</tbody>
+          </table>
+          <div class="legend">雷达六轴: 伤害% / 承伤% / 辅助%(有效治疗+给队友的盾, 缺有效治疗数据时用总治疗) / 控制%(控场时间) / 参战% / 推进% （均为占全队比例, 网格上限随本局最大值自适应）</div>
+        </div>
+      </div>`;
+    wrap.appendChild(div);
+
+    const labels = ['伤害%','承伤%','辅助%','控制%','参战%','推进%'];
+    const datasets = mt.players.map((p,i)=>({
+      label: p.name,
+      data: [p.radar.dmg, p.radar.tank, p.radar.aux,
+             p.radar.cc, p.radar.kp, p.radar.obj],
+      borderColor: PALETTE[i%PALETTE.length],
+      backgroundColor: PALETTE[i%PALETTE.length]+'2e',
+      pointBackgroundColor: PALETTE[i%PALETTE.length],
+      pointBorderColor: 'rgba(255,255,255,.5)',
+      borderWidth: p.name===mt.me_name?3:1.5,
+    }));
+    const ctx = document.getElementById('radar'+idx);
+    // 最大比例自适应: 按本局各维实际最大值取整上浮(至少30), 图形撑满雷达
+    const allVals = datasets.flatMap(d=>d.data);
+    const rMax = Math.max(30, Math.ceil(Math.max(...allVals, 10)/10)*10);
+    charts.push(new Chart(ctx, {
+      type:'radar',
+      data:{ labels, datasets },
+      options:{ responsive:true,
+        scales:{ r:{
+          min:0, max:rMax,
+          ticks:{stepSize:rMax/4, backdropColor:'transparent', color:'rgba(143,160,191,.5)', font:{size:9}, showLabelBackdrop:false},
+          grid:{color:'rgba(148,170,220,.12)'},
+          angleLines:{color:'rgba(148,170,220,.12)'},
+          pointLabels:{color:CHART_INK, font:{size:11.5, weight:'600'}}
+        }},
+        plugins:{ legend:{ position:'bottom',
+          labels:{ boxWidth:10, color:CHART_INK, font:{size:11} } } } }
+    }));
+  });
+}
+
+let current = null;
+let saved = {};   // 持久化设置(aram_settings.json): 金额/阈值/组队名单等
+
+// 启动时读取上次保存的参数, 恢复到输入框与组队名单
+async function loadSettings(){
+  try{
+    const r = await fetch('/api/settings');
+    saved = await r.json() || {};
+  }catch(e){ saved = {}; }
+  // 名单三源: 自动识别(每次拉取新鲜计算) + 手动添加(持久) − 手动移除(持久黑名单)
+  // 不再用整体 party_names 覆盖, 否则新识别结果会被旧名单冲掉(闪一下就没)
+  if(!Array.isArray(saved.party_manual_add)) saved.party_manual_add = [];
+  if(!Array.isArray(saved.party_removed)) saved.party_removed = [];
+  const cnt = document.getElementById('count');
+  const up = document.getElementById('unitPrice');
+  const pp = document.getElementById('pentaPrice');
+  const dl = document.getElementById('detectLevel');
+  const cm = document.getElementById('countMode');
+  if(saved.count) cnt.value = saved.count;
+  if(saved.unit != null && !isNaN(+saved.unit)) up.value = saved.unit;
+  if(saved.penta_unit != null && !isNaN(+saved.penta_unit)) pp.value = saved.penta_unit;
+  if(saved.threshold) dl.value = saved.threshold;
+  if(saved.count_mode) cm.value = saved.count_mode;
+  toggleCountInput();
+}
+loadSettings();
+
+// 左侧悬浮红包面板: 组队名单(自动识别+手动添加) + 红包榜
+function renderFloat(data){
+  const panel = document.getElementById('rpFloat');
+  const m = data.matches || [];
+  // 统计范围为空但组队/榜单信息存在时仍显示面板(给出提示)
+  if(!m.length && !(data.party_names||[]).length){ panel.style.display='none'; return; }
+  panel.style.display='block';
+  const pool = data.pool_size || m.length;
+  // ---- 组队名单: 我(不可删) + 自动识别/手动添加的好友(可删) ----
+  const meNames = data.me_names || [];
+  const partyNames = data.party_names || (meNames.length ? [...meNames] : []);
+  const friends = partyNames.filter(n=>!meNames.includes(n));
+  const rateOf = {};
+  (data.party_info||[]).forEach(x=>rateOf[x.name]=x);
+  let chips = meNames.map(n=>`<span class="chip me-chip">${n}（我）</span>`).join('');
+  chips += friends.map(n=>{
+    const r = rateOf[n];
+    const meta = r ? `<i>共同${r.count}场</i>` : '<i>手动</i>';
+    return `<span class="chip">${n} ${meta}<b class="x" data-name="${n}" title="移出组队">✕</b></span>`;
+  }).join('');
+  document.getElementById('rpParty').innerHTML =
+    `<div class="rp-sub">组队名单 · 共 ${partyNames.length} 人 <span style="font-weight:400;color:var(--sub)">（最近${pool}场自动识别 + 手动添加）</span></div>` +
+    `<div class="chipbox">${chips || '<span style="color:var(--sub)">暂无组队成员</span>'}</div>` +
+    `<div class="rp-add"><input id="mateName" placeholder="输入好友名字补进组队" maxlength="24" /><button class="ghost" id="btnAddMate">＋添加</button></div>`;
+  document.getElementById('btnAddMate').onclick = addMate;
+  document.getElementById('mateName').addEventListener('keydown', e=>{
+    if(e.key==='Enter') addMate();
+  });
+  document.querySelectorAll('#rpParty .chip .x').forEach(el=>{
+    el.onclick = ()=>removeMate(el.dataset.name);
+  });
+  // ---- 红包榜: 只显示组队成员(我+识别/手动好友), 路人不进榜 ----
+  // 统计范围与组队识别分开: 识别=最近pool场识别池; 统计=红包局起点之后的场次
+  const allStats = data.stats || [];
+  const partySet = new Set(data.party_names || (data.me_names||[]));
+  const stats = allStats.filter(x=>partySet.has(x.name));
+  const board = document.getElementById('rpBoard');
+  const fmtTime = ms => { const d = new Date(ms);
+    return `${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
+  const scopeTxt = data.started_at
+    ? `自 ${fmtTime(data.started_at)} 起`
+    : '全部累计';
+  const scopeLine =
+    `<div class="rp-sub">红包局统计: <b style="color:var(--gold)">${m.length}</b> 场（${scopeTxt}）` +
+    `<span style="font-weight:400;color:var(--sub)"> · 组队识别用 ${pool} 场（两套独立计算）</span></div>` +
+    `<div class="rp-scope-btns">` +
+      `<button class="ghost" id="btnScopeNow" ${data.started_at?'disabled':''}>从现在开始统计</button>` +
+      `<button class="ghost" id="btnScopeAll" ${data.started_at?'':'disabled'}>统计全部</button>` +
+    `</div>`;
+  if(stats.length){
+    const fmt = v => `¥${Math.abs(v)%1?Math.abs(v).toFixed(2):Math.abs(v)}`;
+    board.innerHTML = scopeLine +
+      `<div class="rp-sub">红包榜（仅组队成员 · 净 = 🔥五杀收入 − 🧧发出 − 🔥付出）</div>` + stats.map((x,i)=>{
+      const net = x.net||0;
+      const cls = net<0?'rp-pay':(net>0?'rp-get':'');
+      const amt = net<0?`-¥${fmt(net).slice(1)}` : net>0?`+¥${fmt(net).slice(1)}` : '¥0';
+      const fire = x.penta_kills?` <span style="color:var(--gold2)">🔥x${x.penta_kills}</span>`:'';
+      const parts = [];
+      if((x.rp_amount||0)>0) parts.push(`🧧发出 <b style="color:#ff9d9d">¥${fmt(x.rp_amount).slice(1)}</b>（${x.red_packets}次）`);
+      if((x.penta_income||0)>0) parts.push(`🔥五杀收 <b style="color:#7fe3b8">+¥${fmt(x.penta_income).slice(1)}</b>`);
+      if((x.penta_out||0)>0) parts.push(`🔥付赏 <b style="color:#c0adff">-¥${fmt(x.penta_out).slice(1)}</b>`);
+      const detail = parts.length?`<div class="rp-detail">${parts.join(' · ')}</div>`:'';
+      return `
+      <div class="rp-item">
+        <div class="rp-row ${cls}">
+          <span class="rp-rank">${i+1}</span>
+          <span class="rp-name">${x.name}${fire}</span>
+          <span class="rp-n">${x.games}场 · ${x.avg_score}分</span>
+          <span class="rp-amt">${amt}</span>
+        </div>${detail}
+      </div>`;}).join('');
+  } else board.innerHTML = scopeLine +
+    `<div class="rp-sub" style="font-weight:400">统计范围内暂无场次（打完红包局后点「拉取战绩」即会计入）</div>`;
+  // 统计起点按钮
+  const bNow = document.getElementById('btnScopeNow');
+  const bAll = document.getElementById('btnScopeAll');
+  if(bNow) bNow.onclick = ()=>setScope('now');
+  if(bAll) bAll.onclick = ()=>setScope('reset');
+}
+
+// 手动添加组队成员(避免自动识别漏加): 记入手动名单并从移除黑名单剔除
+async function addMate(){
+  const inp = document.getElementById('mateName');
+  const name = (inp.value||'').trim();
+  if(!name || !current) return;
+  if(!current.party_names) current.party_names = [...(current.me_names||[])];
+  if(current.party_names.includes(name)){ inp.value=''; return; }
+  current.party_names.push(name);
+  if(!saved.party_manual_add.includes(name)) saved.party_manual_add.push(name);
+  saved.party_removed = saved.party_removed.filter(n=>n!==name);
+  inp.value='';
+  await reprice(false);
+}
+// 移出组队成员: 加入移除黑名单(下次拉取自动识别也不会再回来)
+async function removeMate(name){
+  if(!current || !current.party_names) return;
+  current.party_names = current.party_names.filter(n=>n!==name);
+  if(!saved.party_removed.includes(name)) saved.party_removed.push(name);
+  saved.party_manual_add = saved.party_manual_add.filter(n=>n!==name);
+  await reprice(false);
+}
+
+// 红包局统计起点: now=从现在开始只统计之后的场次 / reset=统计全部累计场次
+// (只影响红包榜统计范围, 组队识别始终基于识别池, 不受影响)
+async function setScope(mode){
+  if(!current) return;
+  const unit = parseFloat(document.getElementById('unitPrice').value)||10;
+  const penta = parseFloat(document.getElementById('pentaPrice').value)||20;
+  const body = {matches: current.matches||[], unit, penta_unit: penta,
+                party: current.party_names||[], me_names: current.me_names||[],
+                mode: current.mode, server: current.server, stats_start: mode};
+  try{
+    const r = await fetch('/api/redpacket', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)});
+    const d2 = await r.json();
+    if(d2.mode==='error'){ showError('统计范围调整失败: '+d2.error); return; }
+    current = d2;
+    renderSummary(d2); renderMatches(d2); renderFloat(d2);
+    setStatus(mode==='now' ? '已设为从现在开始统计红包局' : '已切换为统计全部场次');
+  }catch(e){ showError('统计范围调整出错: '+e.message); }
+}
+
+// 改单价/阈值: 重算红包与五杀赏金(不用重新拉战绩)。
+// 仅阈值变化(redetect=true)时, 后端用缓存的100场识别池重新识别好友名单。
+async function reprice(redetect){
+  if(!current) return;
+  const unit = parseFloat(document.getElementById('unitPrice').value)||10;
+  const penta = parseFloat(document.getElementById('pentaPrice').value)||20;
+  const body = {matches: current.matches||[], unit, penta_unit: penta,
+                party: current.party_names||[], me_names: current.me_names||[],
+                mode: current.mode, server: current.server,
+                manual_add: saved.party_manual_add||[],
+                manual_removed: saved.party_removed||[]};
+  if(redetect) body.threshold = parseInt(document.getElementById('detectLevel').value)||2;
+  try{
+    const r = await fetch('/api/redpacket', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)});
+    const d2 = await r.json();
+    if(d2.mode==='error'){ showError('红包规则重算失败: '+d2.error); return; }
+    current = d2;
+    renderSummary(d2); renderMatches(d2); renderFloat(d2);
+  }catch(e){ showError('红包规则重算出错: '+e.message); }
+}
+
+async function load(url, opts){
+  showError(''); setStatus('加载中…');
+  try{
+    const r = await fetch(url, opts);
+    const d = await r.json();
+    if(d.mode==='error'){ showError('抓取失败: '+d.error+' —— 请确认本机已登录客户端、国服已开加速器。'); setStatus(''); return; }
+    current = d;
+    // 名单合并: 本次自动识别 ∪ 上次手动添加 − 手动移除黑名单。
+    // 这样新识别结果不会被旧整体名单覆盖, 误删的也不会每场又回来。
+    const fresh = d.party_names || (d.me_names || []).slice();
+    current.party_names = [...new Set([...fresh, ...(saved.party_manual_add||[])])]
+      .filter(n=>!(saved.party_removed||[]).includes(n));
+    current.fresh_names = fresh;
+    renderSummary(d); renderMatches(d); renderFloat(d);
+    if(current.party_names.length){
+      await reprice(false);   // 按合并名单重算并持久化
+    }
+    setStatus(d.mode==='remote' && d.new_count!=null
+      ? `完成 · 本次新增 ${d.new_count} 场 · 红包局统计 ${d.matches.length} 场（${d.started_at?'统计起点后':'全部累计'}）`
+      : '完成');
+  }catch(e){ showError('请求出错: '+e.message); setStatus(''); }
+}
+
+document.getElementById('btnFetch').onclick = ()=>{
+  const c = document.getElementById('count').value || 20;
+  const u = parseFloat(document.getElementById('unitPrice').value)||10;
+  const p = parseFloat(document.getElementById('pentaPrice').value)||20;
+  const t = parseInt(document.getElementById('detectLevel').value)||2;
+  const cm = document.getElementById('countMode').value || 'incremental';
+  setStatus(cm==='incremental'
+    ? '拉取中…（增量补齐新对局 + 识别组队名单，视新场次多少约1-3分钟）'
+    : '拉取中…（先识别最近100场组队名单，约需1-2分钟）');
+  load('/api/fetch?count='+c+'&unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode='+cm);
+};
+// 增量模式下不限场数: 禁用场次输入(拉取会自动补齐所有新对局)
+function toggleCountInput(){
+  const inc = document.getElementById('countMode').value === 'incremental';
+  document.getElementById('count').disabled = inc;
+  document.getElementById('count').title = inc ? '增量模式下自动补齐所有新对局，无需设定场数' : '';
+}
+document.getElementById('countMode').addEventListener('change', toggleCountInput);
+document.getElementById('unitPrice').addEventListener('change', ()=>reprice(false));
+document.getElementById('pentaPrice').addEventListener('change', ()=>reprice(false));
+document.getElementById('detectLevel').addEventListener('change', ()=>reprice(true));
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# 构建产物
+build/
+dist/
+__pycache__/
+*.pyc
+*.spec.bak
+
+# 分享安装包（可从源码重新打包）
+*.zip
+
+# 个人数据（运行时生成，含战绩与账号信息，勿上传）
+aram_matches.json
+aram_settings.json
+matches_input.json
+
+# 工作区元数据
+.workbuddy/
+exe_smoke_test/
+pkg_stage/
+
+# 系统
+Thumbs.db
+.DS_Store
