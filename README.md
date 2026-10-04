@@ -3,7 +3,7 @@
 > 英雄联盟大乱斗（ARAM）**防刷 KDA 评分** + **🧧红包局记账** 桌面工具
 > 独立exe 免安装 · 国服直连 · 对局结束自动弹窗 · 网页面板可视化
 
-[![Version](https://img.shields.io/badge/version-1.2.0-e8b339)](https://gitee.com/zy525548403/hongbao-aram/releases)
+[![Version](https://img.shields.io/badge/version-1.3.0-e8b339)](https://gitee.com/zy525548403/hongbao-aram/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-4f8cff)](https://gitee.com/zy525548403/hongbao-aram/releases)
 [![License](https://img.shields.io/badge/license-MIT-3ecf8e)](LICENSE)
 
@@ -42,17 +42,34 @@
 
 ---
 
+## v1.3 更新内容
+
+| 模块 | 变化 |
+|---|---|
+| **弹窗时机** | 改为**游戏进程一结束就弹**（`League of Legends.exe` 退出即触发），不再等完全退出房间 |
+| **只显示我方** | 弹窗只列**我方 5 人**，不再把对面数据一起拉进来比较 |
+
+### v1.3 修复的三个底层缺陷
+
+| 缺陷 | 说明 |
+|---|---|
+| LCU gameflow 不可用 | `lockfile` 指向的是 **Riot Client** 端口，**不提供 `lol-*` 接口**（实测全部 404）。真正的 LeagueClient API 在另一端口且其 lockfile 是空文件。检测改用**战绩轮询**（LeagueAkari 思路） |
+| DETAILS 拉不到数据 | 路径应为 `HN10_<gameId>`（**不带 `TENCENT_` 前缀**），且返回的是精简结构（participants 只剩 puuid）。改为**从 SUMMARY 取 participants**（含完整统计） |
+| `queueId` 缺失 | 腾讯 SGP 的 `queueId` 在对局节点上，participants 里没有，导致被误判「非大乱斗」而静默跳过。已自动补齐 |
+
 ## v1.2 更新内容
 
 | 模块 | 变化 |
 |---|---|
-| **桌面常驻** | 托盘常驻后台，LCU 事件总线监听对局结束，自动算分弹窗 |
+| **桌面常驻** | 托盘常驻后台，自动检测对局结束并弹窗 |
 | **弹窗不打扰游戏** | 左下角 392×300 轻量浮窗，`Qt.Tool` 无边框不占任务栏，**不抢焦点**，15 秒倒计时自动消失 |
-| **弹窗检测修复** | 跨 session 事件持续跟踪 `gameId`，修复 `EndOfGame` 瞬间 `gameData` 为空导致整局检测不到 |
 | **展示模式 +单一更新** | 「战绩总览 / 从现在开始统计」改为**模式切换**，动作收敛为唯一的「🔄 更新最新战绩」 |
 | **自定义往前往后±1 场** | 不用重新联网，±1 场微调统计范围 |
 | **Web 自动刷新** | 桌面版检测到对局结束广播到 `/api/live`，已打开的网页 5s 轮询自动按当前模式刷新 |
 | **SGP 拉取更稳** | 重试窗口 45s→120s（国服延迟），失败弹信息窗告知而非静默 |
+| **体积优化** | 安装程序从 244MB 精简到 48MB |
+
+> 诊断工具：遇到「不弹窗」可运行 `python diagnose_detect.py`，分 5 步自检并指出卡在哪一环。
 
 ---
 
@@ -207,8 +224,8 @@ A：`aram_matches.json`（战绩库）与 `aram_settings.json`（设置）保存
 | `aram_web.py` | HTTP 服务 + 算分封装 + 战绩库 + `/api/*` 接口 |
 | `index.html` | 前端面板（雷达图/评分表/红包榜/模式切换） |
 | `main_desktop.py` | 托盘常驻入口（检测对局结束 → 弹窗 + 广播） |
-| `lcu_watcher.py` | LCU 事件总线检测层（EndOfGame 监听） |
-| `match_view.py` | 单场战绩 → 弹窗视图模型（复用 Web 端评分） |
+| `lcu_watcher.py` | 对局结束检测层（游戏进程 + SGP 战绩轮询 + LCU 事件三通道） |
+| `match_view.py` | 单场战绩 → 弹窗视图模型（只含我方 5 人，复用 Web 端评分） |
 | `result_popup.py` | 左下角轻量浮窗（PySide6，15s 自动消失） |
 
 ### 开发运行
@@ -222,6 +239,9 @@ python main_desktop.py
 
 # 网页版
 python aram_web.py 8777
+
+# 排查「游戏结束不弹窗」——分 5 步自检，指出卡在哪一环
+python diagnose_detect.py
 ```
 
 ### 构建安装包
