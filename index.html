@@ -329,13 +329,11 @@
 
 <div class="wrap">
   <div class="controls">
-    <label>场次 <input id="count" type="number" value="20" min="1" max="50" /></label>
-    <label>战绩计入 <select id="countMode">
-      <option value="incremental" selected>累计增量</option>
-      <option value="single">仅本次拉取</option>
-    </select></label>
-    <button id="btnFetch">拉取战绩</button>
+    <label>场次 <input id="count" type="number" value="50" min="1" max="200" /></label>
+    <button id="btnScopeNow" class="ghost">从现在开始统计</button>
+    <button id="btnFetchAll">拉取全部战绩</button>
     <span id="status" style="font-size:12px;"></span>
+    <span class="style-hint" style="flex-basis:100%">「拉取全部战绩」按上方场次拉取最近 N 场并全部统计；「从现在开始统计」锚定到上一把后增量追加（无需填场次）</span>
   </div>
 
   <!-- 左侧常驻悬浮: 红包局面板(组队识别 + 红包榜 + 五杀赏金) -->
@@ -518,13 +516,10 @@ async function loadSettings(){
   const up = document.getElementById('unitPrice');
   const pp = document.getElementById('pentaPrice');
   const dl = document.getElementById('detectLevel');
-  const cm = document.getElementById('countMode');
   if(saved.count) cnt.value = saved.count;
   if(saved.unit != null && !isNaN(+saved.unit)) up.value = saved.unit;
   if(saved.penta_unit != null && !isNaN(+saved.penta_unit)) pp.value = saved.penta_unit;
   if(saved.threshold) dl.value = saved.threshold;
-  if(saved.count_mode) cm.value = saved.count_mode;
-  toggleCountInput();
 }
 loadSettings();
 
@@ -572,11 +567,7 @@ function renderFloat(data){
     : '全部累计';
   const scopeLine =
     `<div class="rp-sub">红包局统计: <b style="color:var(--gold)">${m.length}</b> 场（${scopeTxt}）` +
-    `<span style="font-weight:400;color:var(--sub)"> · 组队识别用 ${pool} 场（两套独立计算）</span></div>` +
-    `<div class="rp-scope-btns">` +
-      `<button class="ghost" id="btnScopeNow" ${data.started_at?'disabled':''}>从现在开始统计</button>` +
-      `<button class="ghost" id="btnScopeAll" ${data.started_at?'':'disabled'}>统计全部</button>` +
-    `</div>`;
+    `<span style="font-weight:400;color:var(--sub)"> · 组队识别用 ${pool} 场（两套独立计算）</span></div>`;
   if(stats.length){
     const fmt = v => `¥${Math.abs(v)%1?Math.abs(v).toFixed(2):Math.abs(v)}`;
     board.innerHTML = scopeLine +
@@ -601,11 +592,7 @@ function renderFloat(data){
       </div>`;}).join('');
   } else board.innerHTML = scopeLine +
     `<div class="rp-sub" style="font-weight:400">统计范围内暂无场次（打完红包局后点「拉取战绩」即会计入）</div>`;
-  // 统计起点按钮
-  const bNow = document.getElementById('btnScopeNow');
-  const bAll = document.getElementById('btnScopeAll');
-  if(bNow) bNow.onclick = ()=>setScope('now');
-  if(bAll) bAll.onclick = ()=>setScope('reset');
+  // 统计起点按钮已移至首页控制栏（btnScopeNow / btnFetchAll），此处不再绑定。
 }
 
 // 手动添加组队成员(避免自动识别漏加): 记入手动名单并从移除黑名单剔除
@@ -630,40 +617,9 @@ async function removeMate(name){
   await reprice(false);
 }
 
-// 红包局统计起点: now=从现在开始只统计之后的场次 / reset=统计全部累计场次
-// (只影响红包榜统计范围, 组队识别始终基于识别池, 不受影响)
-// now 不再用「按钮点击时刻」作起点(会导致已有对局全被排除、页面像被重置),
-// 而是把起点锚定到「上一把」(战绩库最新一把的结束时间)。点 now 会先拉取一把
-// 作为起点, 之后每次点「拉取战绩」都以增量形式把新对局追加到该起点之后。
-async function setScope(mode){
-  if(!current) return;
-  const unit = parseFloat(document.getElementById('unitPrice').value)||10;
-  const penta = parseFloat(document.getElementById('pentaPrice').value)||20;
-  const t = parseInt(document.getElementById('detectLevel').value)||2;
-  const cm = document.getElementById('countMode').value || 'incremental';
-  if(mode==='now'){
-    // 「从现在开始统计」: 拉取战绩并把统计起点锚定到「上一把」(战绩库最新一把)。
-    // 之后每次点「拉取战绩」都以增量形式把新对局追加到该起点之后, 不再重置页面。
-    setStatus('设置统计起点并拉取上一把战绩…（增量补齐新对局，约1-3分钟）');
-    load('/api/fetch?count_mode='+encodeURIComponent(cm)
-       +'&unit='+unit+'&penta_unit='+penta+'&threshold='+t+'&stats_start=now');
-    return;
-  }
-  // 「统计全部」: 仅去掉起点过滤、用已有战绩库重算(不重新拉取)
-  const body = {matches: current.matches||[], unit, penta_unit: penta,
-                party: current.party_names||[], me_names: current.me_names||[],
-                mode: current.mode, server: current.server, stats_start: 'reset'};
-  try{
-    const r = await fetch('/api/redpacket', {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body)});
-    const d2 = await r.json();
-    if(d2.mode==='error'){ showError('统计范围调整失败: '+d2.error); return; }
-    current = d2;
-    renderSummary(d2); renderMatches(d2); renderFloat(d2);
-    setStatus('已切换为统计全部场次');
-  }catch(e){ showError('统计范围调整出错: '+e.message); }
-}
+// 统计起点按钮已移至首页控制栏（btnScopeNow / btnFetchAll），此处不再定义 setScope。
+// 「从现在开始统计」= 增量模式 + 锚定上一把（见 btnScopeNow.onclick）；
+// 「拉取全部战绩」= 单次拉取最近 N 场并全部统计（见 btnFetchAll.onclick）。
 
 // 改单价/阈值: 重算红包与五杀赏金(不用重新拉战绩)。
 // 仅阈值变化(redetect=true)时, 后端用缓存的100场识别池重新识别好友名单。
@@ -711,24 +667,27 @@ async function load(url, opts){
   }catch(e){ showError('请求出错: '+e.message); setStatus(''); }
 }
 
-document.getElementById('btnFetch').onclick = ()=>{
-  const c = document.getElementById('count').value || 20;
+document.getElementById('btnScopeNow').onclick = ()=>{
+  // 从现在开始统计: 增量模式, 统计起点锚定到「上一把」; 之后每次点都增量追加新局。
+  // 场次输入在此模式下无意义(增量自动补齐所有新对局), 故禁用。
   const u = parseFloat(document.getElementById('unitPrice').value)||10;
   const p = parseFloat(document.getElementById('pentaPrice').value)||20;
   const t = parseInt(document.getElementById('detectLevel').value)||2;
-  const cm = document.getElementById('countMode').value || 'incremental';
-  setStatus(cm==='incremental'
-    ? '拉取中…（增量补齐新对局 + 识别组队名单，视新场次多少约1-3分钟）'
-    : '拉取中…（先识别最近100场组队名单，约需1-2分钟）');
-  load('/api/fetch?count='+c+'&unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode='+cm);
+  document.getElementById('count').disabled = true;
+  setStatus('设置统计起点并增量拉取（锚定到上一把，约1-3分钟）…');
+  load('/api/fetch?unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=incremental&stats_start=now');
 };
-// 增量模式下不限场数: 禁用场次输入(拉取会自动补齐所有新对局)
-function toggleCountInput(){
-  const inc = document.getElementById('countMode').value === 'incremental';
-  document.getElementById('count').disabled = inc;
-  document.getElementById('count').title = inc ? '增量模式下自动补齐所有新对局，无需设定场数' : '';
-}
-document.getElementById('countMode').addEventListener('change', toggleCountInput);
+document.getElementById('btnFetchAll').onclick = ()=>{
+  // 拉取全部战绩: 按场次拉取最近 N 场并全部统计(不过滤起点)。场次输入在此模式下使用。
+  const c = parseInt(document.getElementById('count').value)||50;
+  const u = parseFloat(document.getElementById('unitPrice').value)||10;
+  const p = parseFloat(document.getElementById('pentaPrice').value)||20;
+  const t = parseInt(document.getElementById('detectLevel').value)||2;
+  document.getElementById('count').disabled = false;
+  setStatus('拉取最近 '+c+' 场全部战绩（约1-2分钟）…');
+  load('/api/fetch?count='+c+'&unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=single&stats_start=reset');
+};
+// 「场次」仅在「拉取全部战绩」时使用;「从现在开始统计」为增量模式, 场次输入由按钮逻辑禁用
 document.getElementById('unitPrice').addEventListener('change', ()=>reprice(false));
 document.getElementById('pentaPrice').addEventListener('change', ()=>reprice(false));
 document.getElementById('detectLevel').addEventListener('change', ()=>reprice(true));

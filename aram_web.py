@@ -331,15 +331,20 @@ def run_remote(count: int = 20, unit: float = 10.0,
             #          库为空时暂不设起点, 等下面拉取后再锚定。
             #   reset = 统计全部(不过滤)。
             if stats_start == "now":
-                gcs = [int(m["game_creation"]) for m in store.values()
-                       if m.get("game_creation")]
-                if gcs:
-                    started_at = max(gcs)   # 锚定到最新一把(上一把)的结束时间
+                # 仅在尚未锚定时锚定起点(=上一把), 之后保持该起点不变,
+                # 让后续增量拉取把新对局追加到起点之后。否则每点一次都重锚定到
+                # 最新一把, 统计范围被压缩成只剩最新一把, 失去"增量累积"效果。
+                if started_at is None:
+                    gcs = [int(m["game_creation"]) for m in store.values()
+                           if m.get("game_creation")]
+                    if gcs:
+                        started_at = max(gcs)   # 锚定到最新一把(上一把)的结束时间
             elif stats_start == "reset":
                 started_at = None
         else:
             started_at, store = None, None
-            scan_count = DETECT_POOL_SIZE
+            # 「拉取全部战绩」: 按场次填入拉取最近 N 场并全部统计(N 场识别池足够)
+            scan_count = max(1, int(count) if count else DETECT_POOL_SIZE)
             stop_gids = None
         # 1) 分页拉取战绩(同时作为组队识别池: 固定好友几乎场场同队)
         pool_parsed = fetch_aram_matches(fetcher, puuid, scan_count,
