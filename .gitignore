@@ -5,6 +5,13 @@ __pycache__/
 *.pyc
 *.spec.bak
 
+# 编译好的可执行文件与安装包(体积大, 且随每次构建变动)
+# 这些是构建产物: 通过 Gitee Release 附件分发, 不进仓库历史。
+# 历史上曾把 244MB 的 aram_score_desktop.exe 提交进库, 导致 .git 膨胀到 1.7GB,
+# 已在 v1.2 用 filter-branch 剔除。
+release/*.exe
+release/*.zip
+
 # 分享安装包（可从源码重新打包）
 *.zip
 
