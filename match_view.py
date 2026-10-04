@@ -34,8 +34,13 @@ def participants_from_details(details):
     return [], None
 
 
-def build_match_view(details, puuid, party_names=None, unit=10.0, penta_unit=20.0):
-    """构造弹窗视图模型。返回 dict, 或 {"skip": True, ...} 表示跳过(非大乱斗)。"""
+def build_match_view(details, puuid, party_names=None, unit=10.0, penta_unit=20.0,
+                      include_enemy=False):
+    """构造弹窗视图模型。返回 dict, 或 {"skip": True, ...} 表示跳过(非大乱斗)。
+
+    include_enemy: 是否附带敌方 5 人(默认 **False** —— 弹窗只显示我方 5 人)。
+        评分始终按"我方 5 人"内部横向比较, 敌方分数对开黑记账无意义。
+    """
     parts, game_id = participants_from_details(details)
     if not parts:
         return None
@@ -53,8 +58,8 @@ def build_match_view(details, puuid, party_names=None, unit=10.0, penta_unit=20.
     own = [p for p in parts if p.get("teamId") == team_id]
     enemy = [p for p in parts if p.get("teamId") != team_id]
 
+    # 评分只用我方 5 人(同队相对贡献才是开黑记账的依据)
     own_res = score_team(own, puuid)
-    enemy_res = score_team(enemy, None)
 
     players = []
     for p in own_res["players"]:
@@ -67,16 +72,18 @@ def build_match_view(details, puuid, party_names=None, unit=10.0, penta_unit=20.
             "win": bool(me.get("win")),
             "is_me": p["name"] == own_res["me_name"],
         })
-    for p in enemy_res["players"]:
-        players.append({
-            "name": p["name"],
-            "champion_cn": p.get("champion_cn"),
-            "kda": p.get("kda"),
-            "new_score": p.get("new_score"),
-            "grade": p.get("grade"),
-            "win": not bool(me.get("win")),
-            "is_me": False,
-        })
+    if include_enemy:
+        enemy_res = score_team(enemy, None)
+        for p in enemy_res["players"]:
+            players.append({
+                "name": p["name"],
+                "champion_cn": p.get("champion_cn"),
+                "kda": p.get("kda"),
+                "new_score": p.get("new_score"),
+                "grade": p.get("grade"),
+                "win": not bool(me.get("win")),
+                "is_me": False,
+            })
 
     match = {
         "gameId": game_id,

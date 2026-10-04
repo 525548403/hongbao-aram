@@ -26,6 +26,7 @@ LCU websocket 协议(逆向自 Riot LCU):
 import json
 import time
 import threading
+import subprocess
 
 import websocket  # websocket-client
 from aram_akari_framework import (lcu_auth, get_entitlements, SgpFetcher,
@@ -145,25 +146,98 @@ def watch_gameflow(on_game_end, stop_event=None, status_cb=None,
 # ============================================================
 # 检测层 2: SGP 战绩轮询(借鉴 LeagueAkari)
 # ============================================================
+# 游戏内进程名(对局进行中才会出现)。它一消失 = 对局刚结束, 这是**本地即时信号**,
+# 比等 SGP 入库快得多(后者通常要等回到大厅/退出房间后才可查)。
+GAME_PROCESS = "league of legends.exe"
+
+# 进程退出时置位, 由 SGP 轮询线程读取并切换到快频轮询(跨线程轻量信号)
+_fast_flag = {"on": False}
+
+
+def game_running():
+    """游戏内进程是否在运行(用于判断"是否在对局中")。失败时返回 None(未知)。"""
+    try:
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH", "/FI",
+                              f"IMAGENAME eq {GAME_PROCESS}"],
+                             capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=15)
+        if out.returncode != 0:
+            return None
+        return GAME_PROCESS in (out.stdout or "").lower()
+    except Exception:
+        return None
+
+
+def watch_game_process(on_game_end, stop_event=None, status_cb=None,
+                       seen=None, interval=2.0, settle=6.0):
+    """监控游戏进程: 由"在运行"变为"已退出"时, 立即回调一次。
+
+    这是最快的通道 —— 进程退出即刻感知, 不等 SGP 入库。
+    退出后延迟 settle 秒再回调, 给战绩入库留出时间; 真正的数据获取与重试
+    由调用方的 _fetch_match_data 负责(它会轮询等待)。
+    每次"检测到"通过 seen 里的 game_process 标记防重复触发。
+    """
+    seen = seen if seen is not None else set()
+    stop_event = stop_event or threading.Event()
+    in_game = [False]      # 上一轮是否在对局中
+    reported = [False]     # 本次"结束"是否已上报
+
+    while not stop_event.is_set():
+        try:
+            now = game_running()
+            if now is None:
+                pass# 检测不了, 忽略本轮
+            elif now and not in_game[0]:
+                in_game[0] = True
+                reported[0] = False
+                if status_cb:
+                    status_cb("检测到对局开始 · 等待结束")
+            elif (not now) and in_game[0] and not reported[0]:
+                # 游戏进程刚退出 -> 对局结束
+                in_game[0] = False
+                reported[0] = True
+                _fast_flag["on"] = True   # 通知 SGP 轮询切快频
+                if status_cb:
+                    status_cb(f"检测到游戏进程退出，{int(settle)}s 后拉取战绩…")
+                if stop_event.wait(settle):
+                    break
+                try:
+                    on_game_end("__PROCESS_EXIT__")
+                except Exception as e:
+                    if status_cb:
+                        status_cb(f"处理对局出错: {e}")
+        except Exception as e:
+            if status_cb:
+                status_cb(f"进程监控异常: {type(e).__name__}")
+        if stop_event.wait(interval):
+            break
+
+
 def watch_sgp_poll(on_game_end, stop_event=None, status_cb=None,
-                   seen=None, interval=60.0, warmup=2):
+                   seen=None, interval=20.0, warmup=2, fast_window=150.0):
     """轮询 SGP 战绩列表, 通过"最新一局 gameId 变化"判断又打了一把。
 
-    为什么要这一层: gameflow 的 phase 事件在国服客户端上时有时无
-    (gameData 为空 / websocket 订阅不生效), 单靠它检测会整局漏掉。
-    而"战绩列表多出新的一局"是**唯一可靠且与客户端事件无关**的信号 ——
-    LeagueAkari 判断"又打了一把"用的正是这个思路。
+    为什么要这一层: gameflow 的 phase 事件在国服客户端上不可用(Riot Client 端口
+    不提供 lol-* 接口), 而 SGP 战绩入库又慢于游戏进程退出。
+    "战绩列表多出新的一局"与客户端事件无关, 是**最终兜底保障**。
 
+    interval: 平时轮询间隔(默认 20s, 兼顾及时性与请求量)。
+    fast_window: 进程退出后这段时间内改用快频轮询(fast_interval),
+    尽快拿到新局gameId。
     warmup: 启动后前 N 次只记录基线不触发, 避免开机时把"上一局"误判为新局。
     """
     seen = seen if seen is not None else set()
     stop_event = stop_event or threading.Event()
     last_gid = [None]
     ticks = [0]
+    fast_until = [0.0]      # 快频轮询截止时间戳
 
     def _status(t):
         if status_cb:
             status_cb(t)
+
+    def _enter_fast(seconds):
+        fast_until[0] = max(fast_until[0], time.time() + seconds)
 
     # 凭据/抓取器按需重建(长期运行可能因令牌过期需刷新)
     state = {"base": None, "s": None, "cfg": None, "puuid": None}
@@ -180,6 +254,10 @@ def watch_sgp_poll(on_game_end, stop_event=None, status_cb=None,
 
     _status("监控中 · 等待对局结束（SGP 轮询已启动）")
     while not stop_event.is_set():
+        # 进程退出通道已进入快频窗口 -> 立即切快频抢新局
+        if _fast_flag["on"]:
+            _fast_flag["on"] = False
+            _enter_fast(fast_window)
         try:
             _ensure()
             gid = latest_aram_gameid(state["fetcher"], state["puuid"])
@@ -201,13 +279,16 @@ def watch_sgp_poll(on_game_end, stop_event=None, status_cb=None,
                             on_game_end(gid)
                         except Exception as e:
                             _status(f"处理对局出错: {e}")
+                    fast_until[0] = 0.0   # 已拿到新局, 退出快频
         except Exception as e:
             # 令牌过期/网络波动: 丢弃抓取器, 下轮重建
             state["s"] = None
             state["puuid"] = None
             state.pop("fetcher", None)
             _status(f"战绩轮询暂不可用({type(e).__name__})，稍后重试")
-        if stop_event.wait(interval):
+        # 快频窗口内(进程刚退出)用短间隔抢新局, 否则用常规间隔
+        wait = 3.0 if time.time() < fast_until[0] else interval
+        if stop_event.wait(wait):
             break
 
 

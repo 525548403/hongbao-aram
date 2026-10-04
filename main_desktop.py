@@ -28,6 +28,7 @@ import lcu_watcher
 import match_view
 import result_popup
 import aram_web
+import aram_akari_framework
 from aram_akari_framework import (lcu_auth, get_entitlements, SgpFetcher,
                                   read_league_akari_config)
 
@@ -93,8 +94,35 @@ def _has_scores(parts):
     return False
 
 
+PROCESS_EXIT = "__PROCESS_EXIT__"
+
+
+def _fetch_latest_with_wait(fetcher, baseline_gid, deadline_sec=180.0):
+    """等"最新一局"变成新 gameId(对局结束), 然后取其可算分数据。
+
+    游戏进程退出只是"对局结束"的信号, 此时战绩可能还没入库(SGP 延迟),
+    所以这里轮询等一个**不同于 baseline 的新 gameId** 出现。
+    """
+    deadline = time.time() + deadline_sec
+    delay = 3.0
+    while time.time() < deadline:
+        try:
+            gid = aram_akari_framework.latest_aram_gameid(fetcher, fetcher._puuid)
+            if gid and gid != baseline_gid:
+                d = fetcher.get_aram_details(gid)
+                if d and len(d.get("participants") or []) >= 10:
+                    return d
+        except Exception:
+            pass
+        if time.time() >= deadline:
+            break
+        time.sleep(delay)
+        delay = min(delay * 1.4, 8.0)
+    return None
+
+
 def _on_game_end(gid):
-    """LCU 事件回调(在 ws 线程): 仅把 game_id 丢进队列, 不在 ws 线程做网络。"""
+    """检测回调(任意检测线程): 仅把信号丢进队列, 不在检测线程做网络。"""
     QUEUE.put(gid)
 
 
@@ -106,8 +134,27 @@ def _process_game(gid):
         rso = (cfg or {}).get("rsoPlatformId", "HN10")
         region = (cfg or {}).get("region", "TENCENT")
         fetcher = SgpFetcher(token, rso, region).set_puuid(puuid)
-        _status(f"对局 {gid} 结束, 拉取战绩中…")
-        data = _fetch_match_data(fetcher, gid)
+        if gid == PROCESS_EXIT:
+            # 进程退出通道: 此刻还不知道 gameId, 先拿基线, 再等"新一局"入库
+            try:
+                baseline = aram_akari_framework.latest_aram_gameid(
+                    fetcher, puuid)
+            except Exception:
+                baseline = None
+            _status("对局结束, 等待战绩入库…")
+            data = _fetch_latest_with_wait(fetcher, baseline)
+            if not data:
+                _status("等待战绩入库超时(SGP 延迟)")
+                if BRIDGE is not None:
+                    BRIDGE.popup_info.emit(
+                        "🧧 对局已结束",
+                        "检测到对局结束, 但战绩尚未入库(腾讯 SGP 延迟), 未能自动弹出评分。\n"
+                        "可稍后在战绩面板点「🔄 更新最新战绩」补录本场。")
+                return
+            gid = data.get("gameId")
+        else:
+            _status(f"对局 {gid} 结束, 拉取战绩中…")
+            data = _fetch_match_data(fetcher, gid)
         if not data:
             # 远程战绩延迟拉取失败: 弹信息窗告知用户(而非静默无弹窗),
             # 用户可稍后在战绩面板点「更新最新战绩」补录该场。
@@ -251,8 +298,9 @@ def main():
         print("[红包乱斗] 系统托盘不可用, 已降级为对局结束直接弹窗模式。", flush=True)
         _status("监控中(无托盘) · 等待对局结束")
 
-    # 后台线程: 双通道检测(LCU 事件总线 + SGP 战绩轮询) + 拉取 worker
-    # 两者共享 SEEN 去重集合, 同一局只会触发一次弹窗。
+    # 后台线程: 检测(游戏进程 + SGP 轮询 + LCU 事件) + 拉取 worker
+    # 游戏进程通道最快(进程一退出即刻感知), SGP 轮询兜底(战绩入库更晚),
+    # 三者共享 SEEN 去重集合。
     watcher = threading.Thread(
         target=lcu_watcher.watch_gameflow,
         args=(_on_game_end, STOP, _status),
@@ -260,10 +308,15 @@ def main():
     poller = threading.Thread(
         target=lcu_watcher.watch_sgp_poll,
         args=(_on_game_end, STOP, _status),
-        kwargs={"seen": SEEN, "interval": 60.0}, daemon=True)
+        kwargs={"seen": SEEN, "interval": 20.0}, daemon=True)
+    procmon = threading.Thread(
+        target=lcu_watcher.watch_game_process,
+        args=(_on_game_end, STOP, _status),
+        kwargs={"seen": SEEN, "interval": 2.0, "settle": 3.0}, daemon=True)
     worker = threading.Thread(target=_worker, daemon=True)
     watcher.start()
     poller.start()
+    procmon.start()
     worker.start()
 
     _status("监控中 · 等待对局结束")
