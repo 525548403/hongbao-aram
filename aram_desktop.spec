@@ -11,7 +11,9 @@ a = Analysis(
     ["main_desktop.py"],
     pathex=["."],
     binaries=binaries_qt,
-    datas=datas_qt,
+    # 战绩面板首页 index.html + 其依赖 vendor/(chart.js) 必须打进 onefile 包
+    # (运行时在 sys._MEIPASS 下, Handler 用 resource_path 读取)。
+    datas=datas_qt + [("index.html", "."), ("vendor", "vendor")],
     hiddenimports=[
         "requests", "urllib3", "sqlite3", "websocket",
     ] + hiddenimports_qt,
