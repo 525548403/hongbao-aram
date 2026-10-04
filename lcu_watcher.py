@@ -24,6 +24,7 @@ LCU websocket 协议(逆向自 Riot LCU):
      无关, 因此不受 websocket 订阅失败 / phase 取值差异影响, 是兜底保障。
 """
 import json
+import os
 import time
 import threading
 import subprocess
@@ -155,12 +156,25 @@ _fast_flag = {"on": False}
 
 
 def game_running():
-    """游戏内进程是否在运行(用于判断"是否在对局中")。失败时返回 None(未知)。"""
+    """游戏内进程是否在运行(用于判断"是否在对局中")。失败时返回 None(未知)。
+
+    两个坑(都已在真机踩过):
+    1) 必须传 CREATE_NO_WINDOW —— 否则本程序每2 秒调一次 tasklist,
+       会在屏幕上不断闪出黑色 cmd 窗口(PyInstaller windowed 模式也会闪)。
+    2) tasklist 输出是**系统本地编码(国服机器为 GBK)**, 若按 utf-8 解码,
+       遇到中文进程名会抛 UnicodeDecodeError 导致误判。用 errors="replace"
+       兜住, 且只判断目标英文进程名是否出现, 不受其它行编码影响。
+    """
     try:
+        kwargs = {}
+        if os.name == "nt":
+            # 0x08000000 = CREATE_NO_WINDOW, 彻底禁止弹出控制台窗口
+            kwargs["creationflags"] = 0x08000000
+        # 不指定 encoding, 让 Python 用系统默认编码(GBK/UTF-8 均可)
         out = subprocess.run(["tasklist", "/FO", "CSV", "/NH", "/FI",
                               f"IMAGENAME eq {GAME_PROCESS}"],
                              capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=15)
+                             errors="replace", timeout=15, **kwargs)
         if out.returncode != 0:
             return None
         return GAME_PROCESS in (out.stdout or "").lower()
