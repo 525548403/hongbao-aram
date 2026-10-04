@@ -670,9 +670,17 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def main():
-    srv = HTTPServer(("127.0.0.1", PORT), Handler)
-    url = f"http://127.0.0.1:{PORT}"
+def make_server(port=None):
+    """创建并返回 (HTTPServer, port)。供桌面常驻程序在子线程内嵌战绩面板。"""
+    p = int(port) if port else PORT
+    return HTTPServer(("127.0.0.1", p), Handler), p
+
+
+def serve_forever(port=None, open_browser=True):
+    """启动战绩面板服务。open_browser=False 时只起服务不开浏览器
+    (由调用方程序自行决定何时打开主界面)。"""
+    srv, p = make_server(port)
+    url = f"http://127.0.0.1:{p}"
     print("=" * 56)
     print("  红包乱斗  (已打包为独立程序)")
     print("=" * 56)
@@ -682,13 +690,18 @@ def main():
     print("  国服建议开启加速器; 否则可直接看「示例数据」。")
     print("  关闭本窗口即可退出程序。")
     print("=" * 56)
-    # 延迟 1.2s 等服务器起来再开浏览器
-    threading.Timer(1.2, lambda: (_safe_open(url))).start()
+    if open_browser:
+        # 延迟 1.2s 等服务器起来再开浏览器
+        threading.Timer(1.2, lambda: _safe_open(url)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         print("\n已停止")
         srv.shutdown()
+
+
+def main():
+    serve_forever()
 
 
 def _safe_open(url: str):

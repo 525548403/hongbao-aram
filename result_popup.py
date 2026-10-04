@@ -25,14 +25,18 @@ def _tint(tbl, row, color):
             it.setBackground(QBrush(color))
 
 
-def popup_match(vm, stay_ms=30000):
-    """弹出一个置顶战绩窗口。返回 QWidget(由调用方的事件循环驱动)。
-    stay_ms>0 时定时自动关闭。"""
+def popup_match(vm, stay_ms=0):
+    """弹出一个置顶战绩窗口, 返回 QWidget。
+
+    重要: 调用方必须持有返回的窗口引用(例如放进一个列表), 否则 Python 会在
+    事件循环返回后立即把窗口 GC 回收, 表现为"一闪而过"。
+    stay_ms>0 时定时自动关闭; 默认 0 = 不自动关闭(手动点关闭)。"""
     app = QApplication.instance() or QApplication([])
 
     w = QWidget()
     w.setWindowTitle(_TITLE)
     w.setWindowFlag(Qt.WindowStaysOnTopHint)
+    w.setAttribute(Qt.WA_DeleteOnClose, True)   # 关闭即销毁, 触发 destroyed -> 从持有列表移除
     w.resize(640, 480)
 
     layout = QVBoxLayout(w)

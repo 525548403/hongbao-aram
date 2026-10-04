@@ -16,6 +16,7 @@ import json
 import time
 import queue
 import threading
+import webbrowser
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -26,6 +27,7 @@ from PySide6.QtCore import Qt, QObject, Signal
 import lcu_watcher
 import match_view
 import result_popup
+import aram_web
 from aram_akari_framework import (lcu_auth, get_entitlements, SgpFetcher,
                                   read_league_akari_config)
 
@@ -154,8 +156,20 @@ class _Bridge(QObject):
 
     def __init__(self):
         super().__init__()
-        self.popup.connect(lambda vm: result_popup.popup_match(vm))
-        self.status.connect(lambda t: _set_tip(t))
+        self.windows = []                 # 持有所有已弹窗口引用, 防止 GC 一闪而过
+        self.popup.connect(self._on_popup)
+        self.status.connect(self._set_tip)
+
+    def _on_popup(self, vm):
+        # 关键修复: 必须持有返回的窗口引用, 否则 Python 在事件循环返回后
+        # 立即 GC 回收该窗口 -> "一闪而过"。destroyed 时从列表移除, 支持多个并存。
+        w = result_popup.popup_match(vm)  # 默认不自动关闭, 手动点关闭
+        self.windows.append(w)
+        w.destroyed.connect(lambda *a, _w=w: self._drop(_w))
+
+    def _drop(self, w):
+        if w in self.windows:
+            self.windows.remove(w)
 
     @staticmethod
     def _set_tip(t):
@@ -163,21 +177,38 @@ class _Bridge(QObject):
             TRAY.setToolTip(f"红包乱斗 · {t}")
 
 
+def _safe_open(url):
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
 def main():
-    global BRIDGE, TRAY
+    global BRIDGE, TRAY, SRV
     app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)   # 关掉弹窗不退出(常驻托盘)
+    app.setQuitOnLastWindowClosed(False)   # 关掉弹窗/主面板不退出(常驻托盘)
 
     BRIDGE = _Bridge()
+
+    # ---- 常驻战绩面板: 复用原 Web 战绩系统(跟 web 一样) ----
+    SRV, panel_port = aram_web.make_server()
+    threading.Thread(target=SRV.serve_forever, daemon=True).start()
+    panel_url = f"http://127.0.0.1:{panel_port}"
+    # 启动后自动打开主战绩面板(跟原来 web 一样)
+    threading.Timer(1.2, lambda: _safe_open(panel_url)).start()
 
     icon = _make_icon()
     if QSystemTrayIcon.isSystemTrayAvailable():
         TRAY = QSystemTrayIcon(icon)
         menu = QMenu()
+        act_panel = QAction("打开战绩面板", app)
+        act_panel.triggered.connect(lambda: _safe_open(panel_url))
         act_test = QAction("测试弹窗", app)
         act_test.triggered.connect(_test_popup)
         act_quit = QAction("退出", app)
         act_quit.triggered.connect(app.quit)
+        menu.addAction(act_panel)
         menu.addAction(act_test)
         menu.addAction(act_quit)
         TRAY.setContextMenu(menu)
@@ -204,6 +235,14 @@ def main():
         app.exec()
     finally:
         STOP.set()
+        try:
+            SRV.shutdown()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
