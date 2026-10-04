@@ -13,7 +13,7 @@ Unicode true
 
 !define APPNAME "ARAM Score"
 !define EXE     "aram_score.exe"
-!define VERSION "1.0.0"
+!define VERSION "1.1.0"
 
 ; Install to LocalAppData so no admin rights are required
 InstallDir "$LOCALAPPDATA\Programs\${APPNAME}"

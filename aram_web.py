@@ -40,6 +40,7 @@ from aram_champions import champion_cn                        # 英文中文名
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8777
+APP_VERSION = "1.1.0 (开发版 / dev)"  # 单一版本来源: 前端徽标由后端注入
 
 
 def resource_path(rel: str) -> str:
@@ -324,16 +325,22 @@ def run_remote(count: int = 20, unit: float = 10.0,
             started_at, store = load_match_store()
             scan_count = INCREMENTAL_SCAN_LIMIT
             stop_gids = set(store.keys())
+            # 统计起点调整(仅影响红包局统计范围, 不影响组队识别):
+            #   now  = 把起点锚定到「上一把」(战绩库当前最新一把的结束时间),
+            #          之后新打的局(game_creation 更晚)以增量形式追加, 不重置已有数据;
+            #          库为空时暂不设起点, 等下面拉取后再锚定。
+            #   reset = 统计全部(不过滤)。
+            if stats_start == "now":
+                gcs = [int(m["game_creation"]) for m in store.values()
+                       if m.get("game_creation")]
+                if gcs:
+                    started_at = max(gcs)   # 锚定到最新一把(上一把)的结束时间
+            elif stats_start == "reset":
+                started_at = None
         else:
             started_at, store = None, None
             scan_count = DETECT_POOL_SIZE
             stop_gids = None
-        # 统计起点调整: now=从现在开始记账 / reset=统计全部累计场次
-        # (仅改统计范围, 不影响组队识别 —— 识别始终基于识别池)
-        if count_mode == "incremental" and stats_start == "now":
-            started_at = int(time.time() * 1000)
-        elif count_mode == "incremental" and stats_start == "reset":
-            started_at = None
         # 1) 分页拉取战绩(同时作为组队识别池: 固定好友几乎场场同队)
         pool_parsed = fetch_aram_matches(fetcher, puuid, scan_count,
                                          stop_gids=stop_gids)
@@ -369,6 +376,13 @@ def run_remote(count: int = 20, unit: float = 10.0,
                 if key not in store:
                     added += 1
                 store[key] = m          # 覆盖写入(补齐时间戳等新字段)
+            # 「从现在开始统计」且战绩库原本为空(首次锚定):
+            # 拉取后把起点设为刚拉到的库最新一把 game_creation(=上一把),
+            # 之后新打的局以增量形式追加, 已拉取的历史不计入红包局统计。
+            if stats_start == "now" and started_at is None:
+                gcs = [int(m["game_creation"]) for m in store.values()
+                       if m.get("game_creation")]
+                started_at = max(gcs) if gcs else int(time.time() * 1000)
             save_match_store(started_at, store)
             matches = scope_matches(list(store.values()), started_at)
             me_names = sorted({m["me_name"] for m in matches
@@ -471,6 +485,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path in ("/", "/index.html"):
             html = Path(resource_path("index.html")).read_text(encoding="utf-8")
+            html = html.replace("<!--APP_VERSION-->", APP_VERSION)
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
             return
         if parsed.path.startswith("/vendor/"):
@@ -546,8 +561,12 @@ class Handler(BaseHTTPRequestHandler):
                 store_total = None
                 if stats_start in ("now", "reset"):
                     prev_started, store = load_match_store()
-                    started_at = (int(time.time() * 1000)
-                                  if stats_start == "now" else None)
+                    if stats_start == "reset":
+                        started_at = None
+                    else:  # now: 锚定到上一把(战绩库最新一把的 game_creation)
+                        gcs = [int(m["game_creation"]) for m in store.values()
+                               if m.get("game_creation")]
+                        started_at = max(gcs) if gcs else int(time.time() * 1000)
                     save_match_store(started_at, store)
                     matches = scope_matches(list(store.values()), started_at)
                     me_names = sorted({m["me_name"] for m in matches

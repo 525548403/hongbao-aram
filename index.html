@@ -49,6 +49,12 @@
     background: linear-gradient(90deg, #fff, #ffd97a 55%, #e8b339);
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
+  header .ver-badge {
+    display: inline-block; margin-left: 12px; vertical-align: middle;
+    font-size: 12px; font-weight: 700; letter-spacing: .5px;
+    color: #fff; background: #e67e22; padding: 3px 10px; border-radius: 999px;
+    -webkit-text-fill-color: #fff;
+  }
   header p { margin: 10px 0 0; color: var(--sub); font-size: 13px; letter-spacing: .3px; }
   header .crest {
     position: absolute; right: 0; top: 50%; transform: translateY(-50%);
@@ -315,7 +321,7 @@
 <body>
 <header>
   <div class="inner">
-    <h1>红包乱斗</h1>
+    <h1>红包乱斗<span class="ver-badge"><!--APP_VERSION--></span></h1>
     <p>每英雄专属画像评分 · 同队贡献占比归一 · 综合游戏分 · 🧧红包局（组队识别 + 五杀赏金 + 红包榜）</p>
   </div>
   <div class="crest">Design by ZhangY</div>
@@ -626,13 +632,27 @@ async function removeMate(name){
 
 // 红包局统计起点: now=从现在开始只统计之后的场次 / reset=统计全部累计场次
 // (只影响红包榜统计范围, 组队识别始终基于识别池, 不受影响)
+// now 不再用「按钮点击时刻」作起点(会导致已有对局全被排除、页面像被重置),
+// 而是把起点锚定到「上一把」(战绩库最新一把的结束时间)。点 now 会先拉取一把
+// 作为起点, 之后每次点「拉取战绩」都以增量形式把新对局追加到该起点之后。
 async function setScope(mode){
   if(!current) return;
   const unit = parseFloat(document.getElementById('unitPrice').value)||10;
   const penta = parseFloat(document.getElementById('pentaPrice').value)||20;
+  const t = parseInt(document.getElementById('detectLevel').value)||2;
+  const cm = document.getElementById('countMode').value || 'incremental';
+  if(mode==='now'){
+    // 「从现在开始统计」: 拉取战绩并把统计起点锚定到「上一把」(战绩库最新一把)。
+    // 之后每次点「拉取战绩」都以增量形式把新对局追加到该起点之后, 不再重置页面。
+    setStatus('设置统计起点并拉取上一把战绩…（增量补齐新对局，约1-3分钟）');
+    load('/api/fetch?count_mode='+encodeURIComponent(cm)
+       +'&unit='+unit+'&penta_unit='+penta+'&threshold='+t+'&stats_start=now');
+    return;
+  }
+  // 「统计全部」: 仅去掉起点过滤、用已有战绩库重算(不重新拉取)
   const body = {matches: current.matches||[], unit, penta_unit: penta,
                 party: current.party_names||[], me_names: current.me_names||[],
-                mode: current.mode, server: current.server, stats_start: mode};
+                mode: current.mode, server: current.server, stats_start: 'reset'};
   try{
     const r = await fetch('/api/redpacket', {method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -641,7 +661,7 @@ async function setScope(mode){
     if(d2.mode==='error'){ showError('统计范围调整失败: '+d2.error); return; }
     current = d2;
     renderSummary(d2); renderMatches(d2); renderFloat(d2);
-    setStatus(mode==='now' ? '已设为从现在开始统计红包局' : '已切换为统计全部场次');
+    setStatus('已切换为统计全部场次');
   }catch(e){ showError('统计范围调整出错: '+e.message); }
 }
 
