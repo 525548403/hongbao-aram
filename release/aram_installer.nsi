@@ -12,8 +12,8 @@
 Unicode true
 
 !define APPNAME "ARAM Score"
-!define EXE     "aram_score.exe"
-!define VERSION "1.1.0"
+!define EXE     "aram_score_desktop.exe"
+!define VERSION "1.2.0"
 
 ; Install to LocalAppData so no admin rights are required
 InstallDir "$LOCALAPPDATA\Programs\${APPNAME}"
@@ -21,7 +21,7 @@ InstallDir "$LOCALAPPDATA\Programs\${APPNAME}"
 RequestExecutionLevel user
 
 Name "${APPNAME}"
-OutFile "ARAM-Score-Setup.exe"
+OutFile "ARAM-Score-Setup-${VERSION}.exe"
 Compression lzma
 SetCompressor /SOLID lzma
 

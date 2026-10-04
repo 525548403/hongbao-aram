@@ -40,7 +40,7 @@ from aram_champions import champion_cn                        # 英文中文名
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8777
-APP_VERSION = "1.1.0 (开发版 / dev)"  # 单一版本来源: 前端徽标由后端注入
+APP_VERSION = "1.2.0 (开发版 / dev)"  # 单一版本来源: 前端徽标由后端注入
 
 
 def resource_path(rel: str) -> str:
