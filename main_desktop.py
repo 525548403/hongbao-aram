@@ -59,28 +59,33 @@ def _status(text):
         BRIDGE.status.emit(text)
 
 
-def _fetch_with_retry(fetcher, game_id, timeout=120.0, base=3.0, cap=10.0):
-    """对局结束瞬间 SGP DETAILS 通常延迟 10~30s(国服更慢), 指数退避轮询直到拿到 10 人完整数据。
-    超时窗口放宽到 120s, 避免"对局结束却因 SGP 延迟而弹不出窗"。"""
-    deadline = time.time() + timeout
-    delay = base
+def _fetch_match_data(fetcher, game_id, deadline_sec=120.0):
+    """取单场"可算分"数据(10 人完整统计), 轮询直到就绪或超时。
+
+    重要(2026-10-05 实测): 腾讯 SGP 的 DETAILS 接口返回 data_version=2 的
+    精简结构(participants 只剩 puuid, 数值散在 frames 里), 无法直接算分;
+    且其路径需用 rsoPlatformId(HN10_xxx)而非 TENCENT_HN10_xxx。
+    因此这里统一走 **SUMMARY 里的 participants**(已含完整统计), 更稳。
+    对局刚结束时战绩可能尚未入库, 故轮询等待。
+    """
+    deadline = time.time() + deadline_sec
+    delay = 3.0
     while time.time() < deadline:
         try:
-            d = fetcher.get_details(game_id)
-            parts, _ = match_view.participants_from_details(d)
-            if parts and len(parts) >= 10 and _has_scores(parts):
+            d = fetcher.get_aram_details(game_id)
+            if d and len(d.get("participants") or []) >= 10:
                 return d
         except Exception:
             pass
         if time.time() >= deadline:
             break
         time.sleep(delay)
-        delay = min(delay * 1.5, cap)
+        delay = min(delay * 1.4, 12.0)
     return None
 
 
 def _has_scores(parts):
-    """SGP 在战绩就绪前可能返回空壳, 这里确认至少有完整数值字段。"""
+    """确认 participants 带完整数值字段(SUMMARY 版字段名)。"""
     for p in parts:
         if p.get("totalDamageDealtToChampions") is not None and \
            p.get("kills") is not None:
@@ -100,19 +105,22 @@ def _process_game(gid):
         token, puuid = get_entitlements(base, s)
         rso = (cfg or {}).get("rsoPlatformId", "HN10")
         region = (cfg or {}).get("region", "TENCENT")
-        fetcher = SgpFetcher(token, rso, region)
+        fetcher = SgpFetcher(token, rso, region).set_puuid(puuid)
         _status(f"对局 {gid} 结束, 拉取战绩中…")
-        details = _fetch_with_retry(fetcher, gid)
-        if not details:
+        data = _fetch_match_data(fetcher, gid)
+        if not data:
             # 远程战绩延迟拉取失败: 弹信息窗告知用户(而非静默无弹窗),
-            # 用户可稍后在战绩面板点「拉取全部战绩」补录该场。
+            # 用户可稍后在战绩面板点「更新最新战绩」补录该场。
             _status(f"对局 {gid} 拉取超时(SGP 可能延迟)")
             if BRIDGE is not None:
                 BRIDGE.popup_info.emit(
                     "🧧 对局已结束",
                     f"对局 {gid} 已结束, 但远程战绩暂未就绪(SGP 延迟/网络), "
-                    f"未能自动弹出评分。\n可稍后在战绩面板点「拉取全部战绩」补录本场。")
+                    f"未能自动弹出评分。\n可稍后在战绩面板点「🔄 更新最新战绩」补录本场。")
             return
+        # 构造标准 DETAILS 形状, 复用 match_view 现成解析
+        details = {"metadata": {"gameId": data.get("gameId") or gid},
+                   "info": {"participants": data["participants"]}}
         vm = match_view.build_match_view(details, puuid, party_names=_load_party())
         if not vm:
             _status(f"对局 {gid} 无法解析(非大乱斗或无我方数据), 不弹窗")
@@ -243,13 +251,19 @@ def main():
         print("[红包乱斗] 系统托盘不可用, 已降级为对局结束直接弹窗模式。", flush=True)
         _status("监控中(无托盘) · 等待对局结束")
 
-    # 后台线程: LCU 监听(检测层) + 拉取 worker
+    # 后台线程: 双通道检测(LCU 事件总线 + SGP 战绩轮询) + 拉取 worker
+    # 两者共享 SEEN 去重集合, 同一局只会触发一次弹窗。
     watcher = threading.Thread(
         target=lcu_watcher.watch_gameflow,
         args=(_on_game_end, STOP, _status),
         kwargs={"seen": SEEN}, daemon=True)
+    poller = threading.Thread(
+        target=lcu_watcher.watch_sgp_poll,
+        args=(_on_game_end, STOP, _status),
+        kwargs={"seen": SEEN, "interval": 60.0}, daemon=True)
     worker = threading.Thread(target=_worker, daemon=True)
     watcher.start()
+    poller.start()
     worker.start()
 
     _status("监控中 · 等待对局结束")

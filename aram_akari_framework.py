@@ -161,6 +161,7 @@ class SgpFetcher:
             self.sgp_sub_id, f"https://{self.platform}.api.riotgames.com")
         self.s = requests.Session()
         self.s.verify = False
+        self._puuid = None   # 由 set_puuid() 注入, get_aram_details 定位"我"用
 
     def _headers(self):
         return {
@@ -177,11 +178,89 @@ class SgpFetcher:
         return r.json()
 
     def get_details(self, game_id):
+        """单场 DETAILS。
+
+        注意(2026-10-05 实测修正): 腾讯 SGP 的 DETAILS 路径用
+        **rsoPlatformId 而不是 TENCENT_ 前缀**, 即 `HN10_<gameId>/DETAILS`。
+        之前拼成 `TENCENT_HN10_<gameId>/DETAILS` 会恒定 404, 导致弹窗拿不到数据。
+        另外该接口返回的是 data_version=2 的精简结构(participants 只有 puuid,
+        真实数值在 frames 里), **不适合直接算分** —— 算分请用 SUMMARY 里的
+        participants(已含完整 kills/deaths/assists/伤害等), 见 get_aram_details。
+        """
         url = (f"{self.host}/match-history-query/v1/products/lol/"
-               f"{self.sgp_sub_id}_{game_id}/DETAILS")
+               f"{self.platform.upper()}_{game_id}/DETAILS")
         r = self.s.get(url, headers=self._headers(), timeout=20)
         r.raise_for_status()
         return r.json()
+
+    def get_aram_details(self, game_id, timeout=20):
+        """**推荐**: 取单场大乱斗的"可算分"数据(走 SUMMARY, 绕开 DETAILS 缺陷)。
+
+        返回 {"gameId","participants","game_creation","champion","win"}，
+        participants 是 10 人完整统计, 可直接喂给 aram_web.score_team /
+        match_view.build_match_view。查不到返回 None。
+        """
+        summary = self.get_summary_by_gameid(game_id, timeout=timeout)
+        if not summary:
+            return None
+        j = summary
+        parts = j.get("participants") or []
+        if len(parts) < 10:
+            return None
+        me = next((p for p in parts if p.get("puuid") == self._puuid), None)
+        if me is None:
+            return None
+        qid = j.get("queueId")
+        # 重要: 腾讯 SGP 的 queueId 在**对局节点**上, participants 里没有该字段。
+        # 而 match_view/评分内核按 participants[0].queueId 判定是否大乱斗,
+        # 因此这里把 queueId 补进每个 participant, 否则会被误判为"非大乱斗"。
+        if qid is not None:
+            for p in parts:
+                if p.get("queueId") is None:
+                    p["queueId"] = qid
+        return {
+            "gameId": j.get("gameId") or game_id,
+            "participants": parts,
+            "game_creation": (j.get("gameCreation")
+                              or j.get("gameStartTimestamp")
+                              or j.get("gameEndTimestamp")),
+            "champion": me.get("championName"),
+            "win": bool(me.get("win")),
+            "queueId": qid,
+        }
+
+    def set_puuid(self, puuid):
+        """记录当前账号 puuid(get_aram_details 定位"我"用)。"""
+        self._puuid = puuid
+        return self
+
+    def get_summary_by_gameid(self, game_id, max_pages=3, page=20, timeout=20):
+        """翻 SUMMARY 列表直到找到指定 gameId, 返回其 json 节点(找不到 None)。
+
+        比 DETAILS 可靠: SUMMARY 的 participants 自带完整统计, 且路径格式稳定。
+        """
+        if not game_id:
+            return None
+        gid = str(game_id)
+        index = 0
+        for _ in range(max_pages):
+            try:
+                summary = self.get_summary(self._puuid, page, start_index=index)
+            except Exception:
+                return None
+            games = summary.get("games", [])
+            if isinstance(games, dict):
+                games = games.get("games", [])
+            if not games:
+                return None
+            for g in games:
+                j = g.get("json") if isinstance(g, dict) else None
+                if j and str(j.get("gameId")) == gid:
+                    return j
+            if len(games) < page:
+                break
+            index += page
+        return None
 
 
 # ============================================================
@@ -255,6 +334,35 @@ def fetch_aram_matches(fetcher, puuid, count=20, page=20, stop_gids=None):
             break
         index += page
     return collected[:count]
+
+
+# ============================================================
+# 2.6) 对局结束检测: SGP 战绩轮询(借鉴 LeagueAkari 的做法)
+# ============================================================
+def latest_aram_gameid(fetcher, puuid, timeout=20):
+    """返回最近一场大乱斗的 gameId(字符串); 没有则 None。
+
+    LeagueAkari 判断"又打了一把"的可靠方式不是看 gameflow phase,
+    而是**轮询 SGP 战绩列表并与上一次比对** —— 战绩一旦多出新的一局,
+    就说明上一局已结束并入库。本函数取列表首局(最新)的 gameId。
+    """
+    summary = fetcher.get_summary(puuid, 1, start_index=0)
+    games = summary.get("games", [])
+    if isinstance(games, dict):
+        games = games.get("games", [])
+    for g in games:
+        j = g.get("json") if isinstance(g, dict) else None
+        if not j:
+            continue
+        if j.get("queueId") not in ARAM_QUEUE_IDS:
+            continue
+        parts = j.get("participants", []) or []
+        if parts and not any(p.get("puuid") == puuid for p in parts):
+            continue
+        gid = j.get("gameId")
+        if gid:
+            return str(gid)
+    return None
 
 
 # ============================================================
