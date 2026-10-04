@@ -94,6 +94,25 @@
     border: 1px solid var(--line); box-shadow: none; font-weight: 600;
   }
   button.ghost:hover { background: rgba(148, 170, 220, .18); }
+  /* ---- 展示模式切换(分段控件) ---- */
+  .seg {
+    display: inline-flex; border: 1px solid var(--line); border-radius: 10px;
+    overflow: hidden; background: rgba(0, 0, 0, .25);
+  }
+  .seg button {
+    border: none; border-radius: 0; padding: 9px 16px; font-size: 13px;
+    font-weight: 700; letter-spacing: .3px; color: var(--sub);
+    background: transparent; box-shadow: none;
+  }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button:hover { filter: none; background: rgba(148, 170, 220, .10); }
+  .seg button.active {
+    color: #101625;
+    background: linear-gradient(135deg, var(--gold2), var(--gold));
+  }
+  .controls .mode-label {
+    font-size: 13px; color: var(--sub); font-weight: 700; letter-spacing: .5px;
+  }
   #status { font-size: 12px; color: var(--sub); }
 
   .summary { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
@@ -329,15 +348,19 @@
 
 <div class="wrap">
   <div class="controls">
-    <label>场次 <input id="count" type="number" value="50" min="1" max="200" /></label>
-    <button id="btnScopeNow" class="ghost">从现在开始统计</button>
-    <button id="btnFetchAll">拉取全部战绩</button>
+    <span class="mode-label">展示模式</span>
+    <span class="seg" id="modeSeg">
+      <button type="button" data-mode="overview" class="active">战绩总览</button>
+      <button type="button" data-mode="ledger">从现在开始统计</button>
+    </span>
+    <button id="btnUpdate">🔄 更新最新战绩</button>
+    <label id="countWrap">场次 <input id="count" type="number" value="50" min="1" max="200" /></label>
     <span class="rp-scope-btns" style="margin:0">
       <button id="btnPrevMatch" class="ghost" title="多看一场更早的对局(统计范围向历史更早处扩展)">往前一场</button>
       <button id="btnNextMatch" class="ghost" title="少看一场最早的对局(统计范围从最早处收缩)">往后一场</button>
     </span>
     <span id="status" style="font-size:12px;"></span>
-    <span class="style-hint" style="flex-basis:100%">「拉取全部战绩」按上方场次拉取最近 N 场并全部统计；「从现在开始统计」锚定到上一把后增量追加（无需填场次）</span>
+    <span class="style-hint" style="flex-basis:100%" id="modeHint"></span>
   </div>
 
   <!-- 左侧常驻悬浮: 红包局面板(组队识别 + 红包榜 + 五杀赏金) -->
@@ -413,7 +436,7 @@ function renderMatches(data){
   wrap.innerHTML='';
   const m = data.matches || [];
   if(!m.length){
-    wrap.innerHTML = '<div class="match"><div class="empty">暂无数据。在已登录英雄联盟客户端 + 国服加速器的机器上点「拉取战绩」，自动拉取最近战绩、识别组队并结算红包。</div></div>';
+    wrap.innerHTML = '<div class="match"><div class="empty">暂无数据。在已登录英雄联盟客户端 + 国服加速器的机器上点上方「🔄 更新最新战绩」，自动拉取最近战绩、识别组队并结算红包。</div></div>';
     return;
   }
   m.forEach((mt, idx)=>{
@@ -595,8 +618,8 @@ function renderFloat(data){
         </div>${detail}
       </div>`;}).join('');
   } else board.innerHTML = scopeLine +
-    `<div class="rp-sub" style="font-weight:400">统计范围内暂无场次（打完红包局后点「拉取战绩」即会计入）</div>`;
-  // 统计起点按钮已移至首页控制栏（btnScopeNow / btnFetchAll），此处不再绑定。
+    `<div class="rp-sub" style="font-weight:400">统计范围内暂无场次（打完一局后点上方「🔄 更新最新战绩」即会计入）</div>`;
+  // 模式切换与「更新」按钮均已移至首页控制栏（modeSeg / btnUpdate），此处不再绑定。
 }
 
 // 手动添加组队成员(避免自动识别漏加): 记入手动名单并从移除黑名单剔除
@@ -621,9 +644,8 @@ async function removeMate(name){
   await reprice(false);
 }
 
-// 统计起点按钮已移至首页控制栏（btnScopeNow / btnFetchAll），此处不再定义 setScope。
-// 「从现在开始统计」= 增量模式 + 锚定上一把（见 btnScopeNow.onclick）；
-// 「拉取全部战绩」= 单次拉取最近 N 场并全部统计（见 btnFetchAll.onclick）。
+// 「展示模式」切换与「更新最新战绩」按钮见上方 doUpdate()/applyModeUI()。
+// 两种模式: overview=总览(按场次拉 N 场全统计) / ledger=从现在开始统计(增量追加)。
 
 // 改单价/阈值: 重算红包与五杀赏金(不用重新拉战绩)。
 // 仅阈值变化(redetect=true)时, 后端用缓存的100场识别池重新识别好友名单。
@@ -671,32 +693,65 @@ async function load(url, opts){
   }catch(e){ showError('请求出错: '+e.message); setStatus(''); }
 }
 
-document.getElementById('btnScopeNow').onclick = ()=>{
-  // 从现在开始统计: 增量模式, 统计起点锚定到「上一把」; 之后每次点都增量追加新局。
-  // 场次输入在此模式下无意义(增量自动补齐所有新对局), 故禁用。
+// ============================================================
+// 展示模式 + 统一「更新」按钮
+// ============================================================
+// 两种模式只是"看哪些场次"的口径不同, 动作只有一个: 点「更新最新战绩」。
+//   总览 overview : 每次拉最近 N 场(场次输入生效), 全部纳入统计, 适合看整体画像
+//   记账 ledger   : 只统计「从现在开始」锚定之后的对局, 之后每次更新只追加新打的那场
+let viewMode = 'overview';
+
+const MODE_HINT = {
+  overview: '当前：<b>战绩总览</b> · 点「更新最新战绩」按场次重新拉取最近 N 场并全部纳入统计（场次生效）',
+  ledger  : '当前：<b>从现在开始统计</b> · 点「更新最新战绩」只追加上次之后新打的场次（场次不生效，自动补齐）',
+};
+
+function applyModeUI(){
+  const seg = document.getElementById('modeSeg');
+  seg.querySelectorAll('button').forEach(b=>{
+    b.classList.toggle('active', b.dataset.mode === viewMode);
+  });
+  // 场次只在总览模式下有意义
+  const cnt = document.getElementById('count');
+  cnt.disabled = (viewMode !== 'overview');
+  document.getElementById('countWrap').style.opacity = (viewMode === 'overview') ? '1' : '.45';
+  document.getElementById('modeHint').innerHTML = MODE_HINT[viewMode];
+}
+
+document.getElementById('modeSeg').querySelectorAll('button').forEach(b=>{
+  b.onclick = ()=>{
+    if(viewMode === b.dataset.mode) return;
+    viewMode = b.dataset.mode;
+    applyModeUI();
+    setStatus('');
+    // 切换模式立即按新口径拉一次, 免得还要再点一次更新
+    doUpdate();
+  };
+});
+
+function doUpdate(){
   const u = parseFloat(document.getElementById('unitPrice').value)||10;
   const p = parseFloat(document.getElementById('pentaPrice').value)||20;
   const t = parseInt(document.getElementById('detectLevel').value)||2;
-  document.getElementById('count').disabled = true;
-  setStatus('设置统计起点并增量拉取（锚定到上一把，约1-3分钟）…');
-  load('/api/fetch?unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=incremental&stats_start=now');
-};
-document.getElementById('btnFetchAll').onclick = ()=>{
-  // 拉取全部战绩: 按场次拉取最近 N 场并全部统计(不过滤起点)。场次输入在此模式下使用。
-  const c = parseInt(document.getElementById('count').value)||50;
-  const u = parseFloat(document.getElementById('unitPrice').value)||10;
-  const p = parseFloat(document.getElementById('pentaPrice').value)||20;
-  const t = parseInt(document.getElementById('detectLevel').value)||2;
-  document.getElementById('count').disabled = false;
-  setStatus('拉取最近 '+c+' 场全部战绩（约1-2分钟）…');
-  load('/api/fetch?count='+c+'&unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=single&stats_start=reset');
-};
+  if(viewMode === 'overview'){
+    // 总览: 按场次拉最近 N 场, 全部统计(不过滤起点)
+    const c = parseInt(document.getElementById('count').value)||50;
+    setStatus('总览模式：拉取最近 '+c+' 场（约1-2分钟）…');
+    load('/api/fetch?count='+c+'&unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=single&stats_start=reset');
+  }else{
+    // 记账: 增量追加。首次点会把统计起点锚定到「上一把」, 之后每次只补新对局。
+    setStatus('记账模式：更新最新一场（首次会锚定统计起点，约1-3分钟）…');
+    load('/api/fetch?unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=incremental&stats_start=now');
+  }
+}
+document.getElementById('btnUpdate').onclick = doUpdate;
+applyModeUI();
 
 // 战绩自定义: 往前往后加一场（±1 场调整统计范围, 不重新联网拉取）
 //  往前一场(delta=+1): 多看一场更早的对局(统计范围向历史更早处扩展一场)
 //  往后一场(delta=-1): 少看一场最早的对局(统计范围从最早处收缩一场)
 async function adjustMatch(delta){
-  if(!current){ showError('请先点「拉取全部战绩」或「从现在开始统计」拉取战绩。'); return; }
+  if(!current){ showError('请先点「更新最新战绩」拉取一次战绩。'); return; }
   const mode = current.count_mode || 'single';
   const count = parseInt(current.count_requested!=null
                 ? current.count_requested
@@ -731,7 +786,7 @@ async function adjustMatch(delta){
 document.getElementById('btnPrevMatch').onclick = ()=>adjustMatch(+1);
 document.getElementById('btnNextMatch').onclick = ()=>adjustMatch(-1);
 
-// 「场次」仅在「拉取全部战绩」时使用;「从现在开始统计」为增量模式, 场次输入由按钮逻辑禁用
+// 「场次」仅在「战绩总览」模式下生效;「从现在开始统计」为增量记账, 场次输入自动禁用
 document.getElementById('unitPrice').addEventListener('change', ()=>reprice(false));
 document.getElementById('pentaPrice').addEventListener('change', ()=>reprice(false));
 document.getElementById('detectLevel').addEventListener('change', ()=>reprice(true));
