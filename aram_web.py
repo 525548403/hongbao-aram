@@ -256,6 +256,36 @@ _POOL = {"pool": [], "me_names": []}
 _LAST_SINGLE_POOL = []
 
 # ============================================================
+# 桌面常驻程序的对局结束广播(供已打开的 Web 面板自动刷新)
+# ============================================================
+# 桌面程序检测到对局结束并算分完成后调用 publish_live_match(); Web 面板轮询
+# GET /api/live, 发现 seq 变化即自动按当前模式刷新一次, 无需用户手点。
+_LIVE = {"seq": 0, "match": None, "at": 0}
+
+
+def publish_live_match(vm: dict):
+    """广播一场刚结束的对局(Web 面板据此自动刷新)。线程安全(整体替换)。"""
+    if not vm:
+        return
+    _LIVE["seq"] = int(_LIVE.get("seq") or 0) + 1
+    _LIVE["match"] = {
+        "gameId": vm.get("gameId"),
+        "champion": vm.get("champion"),
+        "champion_cn": vm.get("champion_cn"),
+        "win": vm.get("win"),
+        "me_name": vm.get("me_name"),
+        "party_payers": vm.get("party_payers") or [],
+    }
+    _LIVE["at"] = int(time.time())
+
+
+def live_state() -> dict:
+    """返回给 Web 面板的广播状态。"""
+    return {"seq": int(_LIVE.get("seq") or 0),
+            "match": _LIVE.get("match"),
+            "at": _LIVE.get("at") or 0}
+
+# ============================================================
 # 战绩本地存储(增量累计模式): 拉取过的新对局存入 aram_matches.json。
 # 两条线彻底分开:
 #   - 组队识别: 每次拉取的识别池(最近100/500场)现场分析, 不落库;
@@ -599,6 +629,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/sample":
             self._send(200, json.dumps(sample_data(), ensure_ascii=False).encode("utf-8"))
+            return
+        if parsed.path == "/api/live":
+            # 桌面常驻程序的对局结束广播(Web 面板据此自动刷新)
+            self._send(200, json.dumps(live_state(),
+                                       ensure_ascii=False).encode("utf-8"))
             return
         if parsed.path == "/api/settings":
             self._send(200, json.dumps(load_settings(),

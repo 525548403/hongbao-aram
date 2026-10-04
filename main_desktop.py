@@ -123,7 +123,12 @@ def _process_game(gid):
         global LAST_VM
         LAST_VM = vm
         if BRIDGE is not None:
-            BRIDGE.popup.emit(vm)   # 切回 GUI 线程弹窗
+            BRIDGE.popup.emit(vm)   # 切回 GUI 线程弹窗(左下角 15s 自动消失)
+        # 广播给已打开的 Web 战绩面板: 面板检测到即自动按当前模式刷新
+        try:
+            aram_web.publish_live_match(vm)
+        except Exception:
+            pass
         _status(f"已弹出: {vm.get('champion_cn')} {'胜' if vm.get('win') else '负'}")
     except Exception as e:
         _status(f"处理对局失败: {type(e).__name__}: {e}")

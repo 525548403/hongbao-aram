@@ -737,15 +737,42 @@ function doUpdate(){
     // 总览: 按场次拉最近 N 场, 全部统计(不过滤起点)
     const c = parseInt(document.getElementById('count').value)||50;
     setStatus('总览模式：拉取最近 '+c+' 场（约1-2分钟）…');
-    load('/api/fetch?count='+c+'&unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=single&stats_start=reset');
-  }else{
-    // 记账: 增量追加。首次点会把统计起点锚定到「上一把」, 之后每次只补新对局。
-    setStatus('记账模式：更新最新一场（首次会锚定统计起点，约1-3分钟）…');
-    load('/api/fetch?unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=incremental&stats_start=now');
+    return load('/api/fetch?count='+c+'&unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=single&stats_start=reset');
   }
+  // 记账: 增量追加。首次点会把统计起点锚定到「上一把」, 之后每次只补新对局。
+  setStatus('记账模式：更新最新一场（首次会锚定统计起点，约1-3分钟）…');
+  return load('/api/fetch?unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=incremental&stats_start=now');
 }
 document.getElementById('btnUpdate').onclick = doUpdate;
 applyModeUI();
+
+// ============================================================
+// 桌面常驻程序联动: 检测到对局结束后自动刷新本页
+// ============================================================
+// 桌面版检测到对局结束 -> 弹左下角浮窗, 同时广播到 /api/live。
+// 本页轮询该接口, seq 变化即自动按当前模式刷新一次, 不用手点「更新」。
+let liveSeq = 0, liveBusy = false;
+
+async function pollLive(){
+  try{
+    const r = await fetch('/api/live');
+    const d = await r.json();
+    if(d.seq && d.seq !== liveSeq){
+      const first = (liveSeq === 0);      // 首次仅记录基线, 不触发刷新
+      liveSeq = d.seq;
+      if(!first && !liveBusy){
+        const m = d.match || {};
+        const who = [m.champion_cn || m.champion || '?', m.win ? '胜' : '负']
+                    .filter(Boolean).join(' · ');
+        setStatus(`检测到新对局(${who})，正在自动更新…`);
+        liveBusy = true;
+        await doUpdate();                 // 按当前展示模式自动刷新
+        liveBusy = false;
+      }
+    }
+  }catch(e){ /* 面板独立运行(非桌面版)时无此接口, 静默忽略 */ }
+}
+setInterval(pollLive, 5000);
 
 // 战绩自定义: 往前往后加一场（±1 场调整统计范围, 不重新联网拉取）
 //  往前一场(delta=+1): 多看一场更早的对局(统计范围向历史更早处扩展一场)
