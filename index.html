@@ -332,6 +332,10 @@
     <label>场次 <input id="count" type="number" value="50" min="1" max="200" /></label>
     <button id="btnScopeNow" class="ghost">从现在开始统计</button>
     <button id="btnFetchAll">拉取全部战绩</button>
+    <span class="rp-scope-btns" style="margin:0">
+      <button id="btnPrevMatch" class="ghost" title="多看一场更早的对局(统计范围向历史更早处扩展)">往前一场</button>
+      <button id="btnNextMatch" class="ghost" title="少看一场最早的对局(统计范围从最早处收缩)">往后一场</button>
+    </span>
     <span id="status" style="font-size:12px;"></span>
     <span class="style-hint" style="flex-basis:100%">「拉取全部战绩」按上方场次拉取最近 N 场并全部统计；「从现在开始统计」锚定到上一把后增量追加（无需填场次）</span>
   </div>
@@ -687,6 +691,46 @@ document.getElementById('btnFetchAll').onclick = ()=>{
   setStatus('拉取最近 '+c+' 场全部战绩（约1-2分钟）…');
   load('/api/fetch?count='+c+'&unit='+u+'&penta_unit='+p+'&threshold='+t+'&count_mode=single&stats_start=reset');
 };
+
+// 战绩自定义: 往前往后加一场（±1 场调整统计范围, 不重新联网拉取）
+//  往前一场(delta=+1): 多看一场更早的对局(统计范围向历史更早处扩展一场)
+//  往后一场(delta=-1): 少看一场最早的对局(统计范围从最早处收缩一场)
+async function adjustMatch(delta){
+  if(!current){ showError('请先点「拉取全部战绩」或「从现在开始统计」拉取战绩。'); return; }
+  const mode = current.count_mode || 'single';
+  const count = parseInt(current.count_requested!=null
+                ? current.count_requested
+                : document.getElementById('count').value) || 50;
+  const u = parseFloat(document.getElementById('unitPrice').value)||10;
+  const p = parseFloat(document.getElementById('pentaPrice').value)||20;
+  setStatus(delta>0 ? '往前加一场…' : '往后减一场…');
+  try{
+    const body = {
+      mode, delta, count,
+      started_at: current.started_at,
+      unit: u, penta_unit: p,
+      party_names: current.party_names || (current.me_names||[]),
+      me_names: current.me_names||[],
+      server: current.server,
+    };
+    const r = await fetch('/api/adjust', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if(d.mode==='error'){ showError('调整失败: '+d.error); setStatus(''); return; }
+    current = d;
+    // 名单合并: 本次结果 ∪ 上次手动添加 − 手动移除黑名单
+    const fresh = d.party_names || (d.me_names || []).slice();
+    current.party_names = [...new Set([...fresh, ...(saved.party_manual_add||[])])]
+      .filter(n=>!(saved.party_removed||[]).includes(n));
+    current.fresh_names = fresh;
+    renderSummary(d); renderMatches(d); renderFloat(d);
+    if(d.count_mode==='single') document.getElementById('count').value = d.count_requested;
+    setStatus(d.note || '已调整');
+  }catch(e){ showError('调整出错: '+e.message); setStatus(''); }
+}
+document.getElementById('btnPrevMatch').onclick = ()=>adjustMatch(+1);
+document.getElementById('btnNextMatch').onclick = ()=>adjustMatch(-1);
+
 // 「场次」仅在「拉取全部战绩」时使用;「从现在开始统计」为增量模式, 场次输入由按钮逻辑禁用
 document.getElementById('unitPrice').addEventListener('change', ()=>reprice(false));
 document.getElementById('pentaPrice').addEventListener('change', ()=>reprice(false));

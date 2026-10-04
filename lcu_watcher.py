@@ -12,9 +12,15 @@ LCU websocket 协议(逆向自 Riot LCU):
   - 连接 wss://127.0.0.1:<port>/ , 请求头带 Basic 鉴权
   - 订阅: 发送 [5, "OnJsonApiEvent", <uri>]
   - 事件: 收到 [8, "OnJsonApiEvent_<uri>", <uri|null>, <data>]
+
+关键修复点(游戏结束不弹窗的常见根因):
+  - lol-gameflow/v1/gameflow-phase 事件返回的是**纯字符串 phase**(如 "EndOfGame"),
+    自身不带 gameId, 旧逻辑只能靠会话事件在该瞬间恰好带 gameId, 否则整局检测不到。
+  - 现改为: 跨所有 session 事件**持续跟踪当前 gameId**; 检测到结束阶段时,
+    优先用本事件自带的 gameId, 缺失则回退到最近一次跟踪到的 gameId,
+    保证 EndOfGame 一定能拿到对局号并触发弹窗。
 """
 import json
-import time
 import threading
 
 import websocket  # websocket-client
@@ -59,6 +65,9 @@ def watch_gameflow(on_game_end, stop_event=None, status_cb=None,
     """
     seen = seen if seen is not None else set()
     stop_event = stop_event or threading.Event()
+    # 跨事件持续跟踪的当前 gameId: 即便 EndOfGame 当次事件没带 gameId,
+    # 也能回退到上一刻(InProgress / PreEndOfGame 等)跟踪到的 gameId。
+    last_game_id = [None]
 
     while not stop_event.is_set():
         try:
@@ -97,12 +106,21 @@ def watch_gameflow(on_game_end, stop_event=None, status_cb=None,
                 evt = arr[1]
                 if not (isinstance(evt, str) and evt.startswith("OnJsonApiEvent")):
                     continue
+                uri = arr[2]
                 data = arr[3]
+                # 1) 持续跟踪 session 里的 gameId(所有阶段都带, 作为回退来源)
+                if uri == "lol-gameflow/v1/session" and isinstance(data, dict):
+                    gid = _extract_game_id(data)
+                    if gid:
+                        last_game_id[0] = gid
+                # 2) 检测结束阶段 -> 触发弹窗
                 phase = _phase_of(data)
                 if phase in END_PHASES:
-                    gid = _extract_game_id(data)
+                    gid = _extract_game_id(data) or last_game_id[0]
                     if gid and gid not in seen:
                         seen.add(gid)
+                        if status_cb:
+                            status_cb(f"检测到对局结束 (phase={phase}, game_id={gid})")
                         try:
                             on_game_end(gid)
                         except Exception as e:  # 回调出错不应中断监听
@@ -121,8 +139,6 @@ def watch_gameflow(on_game_end, stop_event=None, status_cb=None,
 
 if __name__ == "__main__":
     # 简易自测: 打印收到的 phase / game_id(需本机已登录英雄联盟)
-    import sys
-
     def _print(gid):
         print("[对局结束] game_id =", gid)
 

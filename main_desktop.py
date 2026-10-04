@@ -59,8 +59,9 @@ def _status(text):
         BRIDGE.status.emit(text)
 
 
-def _fetch_with_retry(fetcher, game_id, timeout=45.0, base=2.0, cap=8.0):
-    """对局结束瞬间 SGP DETAILS 通常延迟 10~30s, 指数退避轮询直到拿到 10 人完整数据。"""
+def _fetch_with_retry(fetcher, game_id, timeout=120.0, base=3.0, cap=10.0):
+    """对局结束瞬间 SGP DETAILS 通常延迟 10~30s(国服更慢), 指数退避轮询直到拿到 10 人完整数据。
+    超时窗口放宽到 120s, 避免"对局结束却因 SGP 延迟而弹不出窗"。"""
     deadline = time.time() + timeout
     delay = base
     while time.time() < deadline:
@@ -103,10 +104,18 @@ def _process_game(gid):
         _status(f"对局 {gid} 结束, 拉取战绩中…")
         details = _fetch_with_retry(fetcher, gid)
         if not details:
+            # 远程战绩延迟拉取失败: 弹信息窗告知用户(而非静默无弹窗),
+            # 用户可稍后在战绩面板点「拉取全部战绩」补录该场。
             _status(f"对局 {gid} 拉取超时(SGP 可能延迟)")
+            if BRIDGE is not None:
+                BRIDGE.popup_info.emit(
+                    "🧧 对局已结束",
+                    f"对局 {gid} 已结束, 但远程战绩暂未就绪(SGP 延迟/网络), "
+                    f"未能自动弹出评分。\n可稍后在战绩面板点「拉取全部战绩」补录本场。")
             return
         vm = match_view.build_match_view(details, puuid, party_names=_load_party())
         if not vm:
+            _status(f"对局 {gid} 无法解析(非大乱斗或无我方数据), 不弹窗")
             return
         if vm.get("skip"):
             _status(f"跳过: {vm.get('reason')}")
@@ -152,18 +161,26 @@ def _make_icon():
 class _Bridge(QObject):
     """跨线程信号桥: 在 GUI 线程创建, 信号跨线程自动排队到 GUI 线程。"""
     popup = Signal(object)
+    popup_info = Signal(str, str)
     status = Signal(str)
 
     def __init__(self):
         super().__init__()
         self.windows = []                 # 持有所有已弹窗口引用, 防止 GC 一闪而过
         self.popup.connect(self._on_popup)
+        self.popup_info.connect(self._on_popup_info)
         self.status.connect(self._set_tip)
 
     def _on_popup(self, vm):
         # 关键修复: 必须持有返回的窗口引用, 否则 Python 在事件循环返回后
         # 立即 GC 回收该窗口 -> "一闪而过"。destroyed 时从列表移除, 支持多个并存。
         w = result_popup.popup_match(vm)  # 默认不自动关闭, 手动点关闭
+        self.windows.append(w)
+        w.destroyed.connect(lambda *a, _w=w: self._drop(_w))
+
+    def _on_popup_info(self, title, message):
+        # 信息/提示窗(如远程战绩延迟失败), 同样持有引用防止 GC
+        w = result_popup.popup_info(title, message)
         self.windows.append(w)
         w.destroyed.connect(lambda *a, _w=w: self._drop(_w))
 

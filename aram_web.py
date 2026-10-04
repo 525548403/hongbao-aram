@@ -251,6 +251,10 @@ def merge_party_names(me_names, party_info, manual_add, manual_removed) -> list:
 # 识别池缓存: 供「组队阈值」调整时重新识别, 无需重新拉取 100 场
 _POOL = {"pool": [], "me_names": []}
 
+# 「拉取全部战绩」(single)模式最近一次拉取的完整匹配池(未经 count 切片)。
+# 供「往前/往后一场」按钮在已拉取范围内 ±1 重新切片, 无需再次联网拉取。
+_LAST_SINGLE_POOL = []
+
 # ============================================================
 # 战绩本地存储(增量累计模式): 拉取过的新对局存入 aram_matches.json。
 # 两条线彻底分开:
@@ -396,6 +400,9 @@ def run_remote(count: int = 20, unit: float = 10.0,
             store_total = len(store)
         else:
             matches = pool_matches[:max(1, count)]
+            # 缓存完整拉取池, 供「往前/往后一场」±1 切片(不重新联网)
+            global _LAST_SINGLE_POOL
+            _LAST_SINGLE_POOL = pool_matches
             me_names = sorted({m["me_name"] for m in matches
                                if m.get("me_name")})
             new_count = len(matches)
@@ -421,6 +428,89 @@ def run_remote(count: int = 20, unit: float = 10.0,
         }
     except BaseException as e:
         return {"mode": "error", "error": f"{type(e).__name__}: {str(e)[:300]}"}
+
+
+# ============================================================
+# 战绩自定义: 往前往后加一场(±1 场调整统计范围)
+# ============================================================
+def adjust_range(mode: str, delta: int, count: int, started_at,
+                 unit: float = 10.0, penta_unit: float = 20.0,
+                 party_names: list = None, me_names: list = None) -> dict:
+    """战绩自定义 ±1 场:
+      - single(拉取全部战绩): 在已拉取池内按 count±1 重新切片并结算(不重新联网拉取)。
+      - incremental(从现在开始统计): 把红包局统计起点按 ±1 场平移并结算(不重新拉取)。
+
+    delta>0 = 往前一场(多看一场更早的对局, 统计范围向历史更早处扩展一场);
+    delta<0 = 往后一场(少看一场最早的对局, 统计范围从最早处收缩一场)。
+    """
+    delta = 1 if delta > 0 else -1
+    if mode == "single":
+        pool = _LAST_SINGLE_POOL
+        if not pool:
+            return {"mode": "error", "error": "尚未拉取战绩, 请先点「拉取全部战绩」"}
+        new_count = max(1, min(len(pool), int(count) + delta))
+        matches = pool[:new_count]
+        names = sorted({m["me_name"] for m in matches
+                        if m.get("me_name")}) or (me_names or [])
+        out = finalize(matches, names, unit, penta_unit,
+                       party_names=party_names or None)
+        out["mode"] = "adjust"
+        out["count_requested"] = new_count
+        out["count_mode"] = "single"
+        out["started_at"] = None
+        out["store_total"] = len(pool)
+        out["pool_size"] = len(pool)
+        out["new_count"] = new_count
+        out["me_names"] = names
+        out["party_info"] = None
+        out["note"] = f"已调整为最近 {new_count} 场(共拉取 {len(pool)} 场可选)"
+        return out
+    else:  # incremental: 平移统计起点
+        prev_started, store = load_match_store()
+        if not store:
+            return {"mode": "error", "error": "战绩库为空, 请先点「从现在开始统计」"}
+        # 所有对局按 game_creation 降序(新->旧)
+        all_m = sorted(store.values(),
+                       key=lambda m: int(m.get("game_creation") or 0), reverse=True)
+        if started_at is None:
+            # 当前=全部累计: 往前无意义; 往后=去掉最旧一场
+            if delta > 0:
+                return {"mode": "error", "error": "已是全部累计, 无法再往前加场"}
+            if len(all_m) <= 1:
+                return {"mode": "error", "error": "仅剩 1 场, 无法再减少"}
+            new_started = int(all_m[-1].get("game_creation") or 0) + 1
+        else:
+            cur = int(started_at)
+            if delta > 0:
+                # 往前: 把起点降到"比当前起点更旧的一场里最新的那场"
+                older = [m for m in all_m if int(m.get("game_creation") or 0) < cur]
+                if not older:
+                    return {"mode": "error", "error": "已是战绩库最早一场, 无法再往前"}
+                new_started = max(int(m.get("game_creation") or 0) for m in older)
+            else:
+                # 往后: 当前包含 game_creation>=cur 的场; 去掉最旧(起点)那场
+                included = [m for m in all_m
+                            if int(m.get("game_creation") or 0) >= cur]
+                if len(included) <= 1:
+                    return {"mode": "error", "error": "统计范围内仅剩 1 场, 无法再减少"}
+                oldest_inc = min(int(m.get("game_creation") or 0) for m in included)
+                new_started = oldest_inc + 1
+        save_match_store(new_started, store)
+        matches = scope_matches(list(store.values()), new_started)
+        names = sorted({m["me_name"] for m in matches
+                        if m.get("me_name")}) or (me_names or [])
+        out = finalize(matches, names, unit, penta_unit,
+                       party_names=party_names or None)
+        out["mode"] = "adjust"
+        out["count_mode"] = "incremental"
+        out["started_at"] = new_started
+        out["store_total"] = len(store)
+        out["pool_size"] = len(_POOL["pool"]) if _POOL["pool"] else len(matches)
+        out["new_count"] = len(matches)
+        out["me_names"] = names
+        out["party_info"] = None
+        out["note"] = f"统计起点已调整: 现含 {len(matches)} 场"
+        return out
 
 
 # ============================================================
@@ -643,6 +733,37 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(200, json.dumps(
                     {"mode": "error", "error": "红包规则处理失败: " + str(e)[:300]},
+                    ensure_ascii=False).encode("utf-8"))
+            return
+        if self.path == "/api/adjust":
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+                mode = payload.get("mode") or "single"
+                if mode not in ("incremental", "single"):
+                    mode = "single"
+                delta = int(payload.get("delta") or 0)
+                if delta == 0:
+                    self._send(200, json.dumps(
+                        {"mode": "error", "error": "delta 必须为 +1 或 -1"},
+                        ensure_ascii=False).encode("utf-8"))
+                    return
+                count = int(payload.get("count") or 50)
+                unit = float(payload.get("unit", 10) or 10)
+                penta_unit = float(payload.get("penta_unit", 20) or 20)
+                party_names = [str(n).strip() for n in (payload.get("party_names") or [])
+                               if str(n).strip()]
+                me_names = [str(n).strip() for n in (payload.get("me_names") or [])]
+                out = adjust_range(mode, delta, count, payload.get("started_at"),
+                                   unit, penta_unit, party_names or None,
+                                   me_names or None)
+                self._send(200, json.dumps(
+                    {**out, "server": payload.get("server")},
+                    ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                self._send(200, json.dumps(
+                    {"mode": "error", "error": "调整范围失败: " + str(e)[:300]},
                     ensure_ascii=False).encode("utf-8"))
             return
         if self.path == "/api/import":

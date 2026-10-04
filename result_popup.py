@@ -36,6 +36,8 @@ def popup_match(vm, stay_ms=0):
     w = QWidget()
     w.setWindowTitle(_TITLE)
     w.setWindowFlag(Qt.WindowStaysOnTopHint)
+    # 关键: 确保窗口从最小化/后台状态恢复正常, 否则某些桌面环境下弹窗会"藏在后面"
+    w.setWindowState(w.windowState() & ~Qt.WindowMinimized)
     w.setAttribute(Qt.WA_DeleteOnClose, True)   # 关闭即销毁, 触发 destroyed -> 从持有列表移除
     w.resize(640, 480)
 
@@ -93,6 +95,47 @@ def popup_match(vm, stay_ms=0):
         QTimer.singleShot(stay_ms, w.close)
 
     w.show()
+    # 强制置顶 + 抢焦点, 保证对局结束后窗口一定能被看到(防"一闪而过/被遮挡")
+    w.raise_()
+    w.activateWindow()
+    return w
+
+
+def popup_info(title, message, stay_ms=0):
+    """弹出一个信息/提示窗(例如远程战绩延迟拉取失败时告知用户), 返回 QWidget。
+
+    与 popup_match 一样需要调用方持有返回的窗口引用以防 GC。"""
+    app = QApplication.instance() or QApplication([])
+
+    w = QWidget()
+    w.setWindowTitle(title or _TITLE)
+    w.setWindowFlag(Qt.WindowStaysOnTopHint)
+    w.setWindowState(w.windowState() & ~Qt.WindowMinimized)
+    w.setAttribute(Qt.WA_DeleteOnClose, True)
+    w.resize(520, 210)
+
+    layout = QVBoxLayout(w)
+    hdr = QLabel(title or _TITLE)
+    hdr.setFont(QFont("Microsoft YaHei", 15, QFont.Weight.Bold))
+    hdr.setAlignment(Qt.AlignCenter)
+    layout.addWidget(hdr)
+
+    body = QLabel(message or "")
+    body.setWordWrap(True)
+    body.setAlignment(Qt.AlignCenter)
+    body.setStyleSheet("color:#cfd8ea; font-size:13px; padding:8px 4px;")
+    layout.addWidget(body)
+
+    btn = QPushButton("知道了")
+    btn.clicked.connect(w.close)
+    layout.addWidget(btn)
+
+    if stay_ms and stay_ms > 0:
+        QTimer.singleShot(stay_ms, w.close)
+
+    w.show()
+    w.raise_()
+    w.activateWindow()
     return w
 
 
