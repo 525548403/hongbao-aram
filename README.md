@@ -5,6 +5,8 @@
 
 [![Version](https://img.shields.io/badge/version-1.3.0-e8b339)](https://gitee.com/zy525548403/hongbao-aram/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-4f8cff)](https://gitee.com/zy525548403/hongbao-aram/releases)
+[![Gitee](https://img.shields.io/badge/mirror-Gitee-ff6b6b?logo=git)](https://gitee.com/zy525548403/hongbao-aram)
+[![GitHub](https://img.shields.io/badge/mirror-GitHub-181717?logo=github)](https://github.com/525548403/hongbao-aram)
 [![License](https://img.shields.io/badge/license-MIT-3ecf8e)](LICENSE)
 
 ---
